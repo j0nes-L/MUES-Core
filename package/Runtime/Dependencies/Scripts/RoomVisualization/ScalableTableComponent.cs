@@ -3,7 +3,11 @@ using UnityEngine;
 
 public class ScalableTableComponent : MonoBehaviour
 {
+    [Tooltip("Prefab for the table leg. Should have a child object for the leg shaft.")]
     public GameObject legPrefab;
+
+    [Tooltip("The thickness of the table top in world units")]
+    public float tableTopThickness = 0.05f;
 
     Transform tableTop;
     Renderer topRend;
@@ -18,12 +22,13 @@ public class ScalableTableComponent : MonoBehaviour
         public Renderer shaftRenderer;
         public Renderer baseRenderer;
         public Vector3 baseLocalScale;
-        public float shaftBaseHeightLocal;
+        public Vector3 shaftBaseLocalScale;
     }
 
     readonly List<LegData> legs = new List<LegData>();
 
     Vector3 previousParentScale;
+    bool initialized = false;
 
     void Awake()
     {
@@ -31,18 +36,41 @@ public class ScalableTableComponent : MonoBehaviour
         topRend = tableTop.GetComponent<Renderer>();
     }
 
+    void Start()
+    {
+        Invoke(nameof(DelayedInit), 0.1f);
+    }
+
+    void DelayedInit()
+    {
+        if (transform.parent != null)
+        {
+            previousParentScale = transform.parent.localScale;
+            ApplyTransform();
+            initialized = true;
+        }
+    }
+
     void LateUpdate()
     {
-        if (transform.parent.localScale != previousParentScale)
+        if (transform.parent == null) return;
+
+        if (!initialized || transform.parent.localScale != previousParentScale)
         {
             ApplyTransform();
             previousParentScale = transform.parent.localScale;
+            initialized = true;
         }
     }
 
     void ApplyTransform()
     {
         if (!legPrefab || !topRend) return;
+        if (transform.parent == null || transform.parent.localScale == Vector3.zero) return;
+
+        float parentScaleY = Mathf.Max(0.001f, transform.parent.localScale.y);
+        float fixedYScale = tableTopThickness / parentScaleY;
+        tableTop.localScale = new Vector3(tableTop.localScale.x, fixedYScale, tableTop.localScale.z);
 
         var lb = topRend.localBounds;
         var c = lb.center;
@@ -58,11 +86,11 @@ public class ScalableTableComponent : MonoBehaviour
 
         Vector3[] localCorners =
         {
-        new Vector3(c.x - (e.x - insetX), yBottom, c.z - (e.z - insetZ)),
-        new Vector3(c.x + (e.x - insetX), yBottom, c.z - (e.z - insetZ)),
-        new Vector3(c.x - (e.x - insetX), yBottom, c.z + (e.z - insetZ)),
-        new Vector3(c.x + (e.x - insetX), yBottom, c.z + (e.z - insetZ))
-    };
+            new Vector3(c.x - (e.x - insetX), yBottom, c.z - (e.z - insetZ)),
+            new Vector3(c.x + (e.x - insetX), yBottom, c.z - (e.z - insetZ)),
+            new Vector3(c.x - (e.x - insetX), yBottom, c.z + (e.z - insetZ)),
+            new Vector3(c.x + (e.x - insetX), yBottom, c.z + (e.z - insetZ))
+        };
 
         int xDiv = Mathf.FloorToInt(transform.localScale.x / legSpacingStep);
         int zDiv = Mathf.FloorToInt(transform.localScale.z / legSpacingStep);
@@ -91,10 +119,8 @@ public class ScalableTableComponent : MonoBehaviour
             legRoot.rotation = transform.rotation;
 
             Transform shaft = legRoot.childCount > 0 ? legRoot.GetChild(0) : null;
-            Renderer shaftR = shaft ? shaft.GetComponentInChildren<Renderer>() : null;
-            Renderer baseR = legRoot.GetComponentInChildren<Renderer>();
-
-            float shaftBaseH = Mathf.Max(1e-6f, shaftR ? shaftR.localBounds.size.y : 1f);
+            Renderer shaftR = shaft ? shaft.GetComponent<Renderer>() : null;
+            Renderer baseR = legRoot.GetComponent<Renderer>();
 
             legs.Add(new LegData
             {
@@ -103,7 +129,7 @@ public class ScalableTableComponent : MonoBehaviour
                 shaftRenderer = shaftR,
                 baseRenderer = baseR,
                 baseLocalScale = legRoot.localScale,
-                shaftBaseHeightLocal = shaftBaseH
+                shaftBaseLocalScale = shaft != null ? shaft.localScale : Vector3.one
             });
         }
 
@@ -114,6 +140,7 @@ public class ScalableTableComponent : MonoBehaviour
             legs.RemoveAt(idx);
         }
 
+        float floorY = MUES_RoomVisualizer.floorHeight;
         float tableBottomWorldY = topRend.bounds.min.y;
 
         for (int i = 0; i < desired.Count; i++)
@@ -122,7 +149,7 @@ public class ScalableTableComponent : MonoBehaviour
             Vector3 localPos = desired[i];
             Vector3 worldCorner = tableTop.TransformPoint(localPos);
 
-            Vector3 worldBasePos = new Vector3(worldCorner.x, MUES_RoomVisualizer.floorHeight, worldCorner.z);
+            Vector3 worldBasePos = new Vector3(worldCorner.x, floorY, worldCorner.z);
             ld.root.position = worldBasePos;
 
             ld.root.localScale = new Vector3(
@@ -131,26 +158,46 @@ public class ScalableTableComponent : MonoBehaviour
                 ld.baseLocalScale.z * invSz
             );
 
-            if (ld.shaft && ld.baseRenderer)
+            if (ld.baseRenderer != null)
             {
-                float baseTopWorldY = ld.baseRenderer.bounds.max.y;
-                float heightWorld = Mathf.Max(0f, tableBottomWorldY - baseTopWorldY);
-                float localHeight = heightWorld / Mathf.Max(1e-6f, ld.root.lossyScale.y);
-                float newY = localHeight / Mathf.Max(1e-6f, ld.shaftBaseHeightLocal);
+                float visualMinY = ld.baseRenderer.bounds.min.y;
+                if (visualMinY < floorY - 0.001f)
+                {
+                    float correction = floorY - visualMinY;
+                    ld.root.position += new Vector3(0, correction, 0);
+                }
+            }
 
-                Vector3 s = ld.shaft.localScale;
-                ld.shaft.localScale = new Vector3(s.x, newY, s.z);
+            // 3. Scale Shaft
+            if (ld.shaft != null)
+            {
+                float shaftStartY = floorY;
+                if (ld.baseRenderer != null) shaftStartY = ld.baseRenderer.bounds.max.y;
 
-                Vector3 baseTopWorldPoint = new Vector3(
-                    ld.baseRenderer.bounds.center.x,
-                    baseTopWorldY,
-                    ld.baseRenderer.bounds.center.z
-                );
+                shaftStartY = Mathf.Max(shaftStartY, floorY);
 
-                Vector3 baseTopLocal = ld.root.InverseTransformPoint(baseTopWorldPoint);
+                float desiredShaftHeight = Mathf.Max(0.01f, tableBottomWorldY - shaftStartY);
+                float rootScaleY = ld.root.lossyScale.y;
+                
+                float shaftLocalY = (shaftStartY - ld.root.position.y) / Mathf.Max(0.0001f, rootScaleY);
+                ld.shaft.localPosition = new Vector3(ld.shaft.localPosition.x, shaftLocalY, ld.shaft.localPosition.z);
 
-                Vector3 lp = ld.shaft.localPosition;
-                ld.shaft.localPosition = new Vector3(lp.x, baseTopLocal.y, lp.z);
+                float meshHeight = 1f;
+                if (ld.shaftRenderer != null)
+                {
+                     var mf = ld.shaft.GetComponent<MeshFilter>();
+                     if (mf && mf.sharedMesh) meshHeight = mf.sharedMesh.bounds.size.y;
+                     else meshHeight = ld.shaftRenderer.bounds.size.y / Mathf.Max(0.0001f, ld.shaft.lossyScale.y);
+                }
+                
+                float requiredScaleY = desiredShaftHeight / (Mathf.Max(0.0001f, rootScaleY) * Mathf.Max(0.0001f, meshHeight));
+                
+                Vector3 newShaftScale = ld.shaftBaseLocalScale;
+                newShaftScale.y = requiredScaleY;
+                ld.shaft.localScale = newShaftScale;
+
+                if (ld.shaftRenderer != null)
+                    ld.shaftRenderer.enabled = true;
             }
         }
     }

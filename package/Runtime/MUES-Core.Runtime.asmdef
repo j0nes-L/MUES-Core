@@ -2,19 +2,20 @@
     "name": "MUES-Core.Runtime",
     "rootNamespace": "MUES-Core",
     "references": [
-        "UnityEngine",
+        "Unity.RenderPipelines.Universal.Runtime",
         "Unity.XR.Management",
         "Unity.XR.CoreUtils",
-        "Unity.XR.Interaction.Toolkit",
         "Unity.TextMeshPro",
         "Oculus.VR",
         "Oculus.Interaction",
         "Oculus.Platform",
         "Meta.XR.MultiplayerBlocks.Shared",
+        "Meta.XR.MultiplayerBlocks.Fusion",
         "Meta.XR.BuildingBlocks",
         "meta.xr.mrutilitykit",
         "PhotonRealtime",
-        "PhotonVoice"
+        "PhotonVoice",
+        "glTFast"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

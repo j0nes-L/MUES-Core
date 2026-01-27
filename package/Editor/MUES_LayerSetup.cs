@@ -9,8 +9,11 @@ namespace MUES.Editor
     {
         static MUES_LayerSetup()
         {
+            EnsureLayer("RenderWhileLoading");
+            EnsureLayer("RoomGeometry");
             EnsureLayer("Wall");
             EnsureLayer("Floor");
+            EnsureLayer("Head");
         }
 
         private static void EnsureLayer(string layerName)
@@ -45,7 +48,7 @@ namespace MUES.Editor
                 }
             }
 
-           ConsoleMessage.Send(true, "[MUES_LayerSetup] No free layer slot available for 'Wall'. " + "Please add it manually in Project Settings > Tags and Layers.", Color.red);
+           ConsoleMessage.Send(true, "[MUES_LayerSetup] No free layer slot available for Layer. " + "Please add it manually in Project Settings > Tags and Layers.", Color.red);
         }
     }
 }

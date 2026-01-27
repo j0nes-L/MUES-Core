@@ -7,7 +7,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: Avatar
+  m_Name: WindowDoor
   m_Shader: {fileID: 4800000, guid: 650dd9526735d5b46b79224bc6e94025, type: 3}
   m_Parent: {fileID: 0}
   m_ModifiedSerializedProperties: 0
@@ -111,7 +111,7 @@ Material:
     m_Ints: []
     m_Floats:
     - _AddPrecomputedVelocity: 0
-    - _Alpha: 0.5
+    - _Alpha: 0.3
     - _AlphaClip: 0
     - _AlphaMaskAffect: 0.5
     - _AlphaMaskFeature: 0
@@ -204,8 +204,8 @@ Material:
     - _XRMotionVectorsPass: 1
     - _ZWrite: 0
     m_Colors:
-    - _BaseColor: {r: 0, g: 0.93958735, b: 1, a: 0.6}
-    - _Color: {r: 0, g: 0.93958735, b: 1, a: 0.6}
+    - _BaseColor: {r: 0, g: 0.8259301, b: 1, a: 0.7490196}
+    - _Color: {r: 0, g: 0.8259301, b: 1, a: 0.7490196}
     - _DissolveScale: {r: 0.1, g: 1.01, b: 5, a: 0}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _GrainScale: {r: 50, g: 50, b: 50, a: 0}

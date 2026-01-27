@@ -9,7 +9,9 @@
   "license": "MIT",
   "dependencies": {
     "com.unity.xr.management": "4.4.0",
-    "com.meta.xr.sdk.all": "78.0.0"
+    "com.unity.xr.openxr": "1.16.1",
+    "com.meta.xr.sdk.all": "78.0.0",
+    "com.unity.cloud.gltfast": "6.16.0"
   },
   "samples": [
   {

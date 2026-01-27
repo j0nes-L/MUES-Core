@@ -58,6 +58,9 @@ public class ScalableDoorComponent : MonoBehaviour
 
     private void LateUpdate()
     {
+        if (transform.parent == null || !IsValidScale(transform.parent.localScale))
+            return;
+
         if (transform.parent.localScale != previousParentScale)
         {
             ApplyTransform();
@@ -65,13 +68,41 @@ public class ScalableDoorComponent : MonoBehaviour
         }
     }
 
+    bool IsValidScale(Vector3 scale)
+    {
+        const float minScale = 1e-6f;
+        return Mathf.Abs(scale.x) > minScale && 
+               Mathf.Abs(scale.y) > minScale && 
+               Mathf.Abs(scale.z) > minScale &&
+               !float.IsNaN(scale.x) && !float.IsNaN(scale.y) && !float.IsNaN(scale.z) &&
+               !float.IsInfinity(scale.x) && !float.IsInfinity(scale.y) && !float.IsInfinity(scale.z);
+    }
+
+    Vector3 SafeScale(float x, float y, float z)
+    {
+        return new Vector3(
+            IsValidFloat(x) ? x : 1f,
+            IsValidFloat(y) ? y : 1f,
+            IsValidFloat(z) ? z : 1f
+        );
+    }
+
+    bool IsValidFloat(float value)
+    {
+        return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
     void ApplyTransform()
     {
         float topParentScaleX = ParentScaleAlong(top, Vector3.right);
         float topParentScaleY = ParentScaleAlong(top, Vector3.up);
-        float topScaleX = topTargetWorldXY.x / (topBaseLocalXY.x * topParentScaleX);
-        float topScaleY = topTargetWorldXY.y / (topBaseLocalXY.y * topParentScaleY);
-        top.localScale = new Vector3(topScaleX, topScaleY, top.localScale.z);
+        
+        if (topParentScaleX < 1e-6f || topParentScaleY < 1e-6f)
+            return;
+
+        float topScaleX = topTargetWorldXY.x / (topBaseLocalXY.x * Mathf.Max(1e-6f, topParentScaleX));
+        float topScaleY = topTargetWorldXY.y / (topBaseLocalXY.y * Mathf.Max(1e-6f, topParentScaleY));
+        top.localScale = SafeScale(topScaleX, topScaleY, top.localScale.z);
 
         float leftParentScaleX = ParentScaleAlong(left, Vector3.right);
         float leftParentScaleY = ParentScaleAlong(left, Vector3.up);
@@ -81,6 +112,9 @@ public class ScalableDoorComponent : MonoBehaviour
         float rightParentScaleZ = ParentScaleAlong(right, Vector3.forward);
         float mainParentScaleY = ParentScaleAlong(main, Vector3.up);
         float mainParentScaleZ = ParentScaleAlong(main, Vector3.forward);
+
+        if (leftParentScaleY < 1e-6f || rightParentScaleY < 1e-6f || mainParentScaleY < 1e-6f)
+            return;
 
         var tLB = rendTop.localBounds;
         Vector3 worldBottomPointTop = top.TransformPoint(new Vector3(tLB.center.x, tLB.min.y, tLB.center.z));
@@ -98,24 +132,24 @@ public class ScalableDoorComponent : MonoBehaviour
         float heightRight = WorldDistanceAlong(right, worldBottomLine, worldBottomPointTop, Vector3.up);
         float widthMain = WorldDistanceAlong(main, worldRimRight, worldRimLeft, Vector3.forward);
 
-        float leftScaleX = leftTargetWorldXY.x / (leftBaseLocalXY.x * leftParentScaleX);
-        float rightScaleX = rightTargetWorldXY.x / (rightBaseLocalXY.x * rightParentScaleX);
-        float leftScaleY = heightLeft / (leftBaseLocalXY.y * leftParentScaleY);
-        float rightScaleY = heightRight / (rightBaseLocalXY.y * rightParentScaleY);
+        float leftScaleX = leftTargetWorldXY.x / (leftBaseLocalXY.x * Mathf.Max(1e-6f, leftParentScaleX));
+        float rightScaleX = rightTargetWorldXY.x / (rightBaseLocalXY.x * Mathf.Max(1e-6f, rightParentScaleX));
+        float leftScaleY = heightLeft / (leftBaseLocalXY.y * Mathf.Max(1e-6f, leftParentScaleY));
+        float rightScaleY = heightRight / (rightBaseLocalXY.y * Mathf.Max(1e-6f, rightParentScaleY));
         float leftScaleZ = originalZScaleSides / Mathf.Max(1e-6f, leftParentScaleZ);
         float rightScaleZ = originalZScaleSides / Mathf.Max(1e-6f, rightParentScaleZ);
 
-        left.localScale = new Vector3(leftScaleX, leftScaleY, leftScaleZ);
-        right.localScale = new Vector3(rightScaleX, rightScaleY, rightScaleZ);
+        left.localScale = SafeScale(leftScaleX, leftScaleY, leftScaleZ);
+        right.localScale = SafeScale(rightScaleX, rightScaleY, rightScaleZ);
 
         float zMid = 0.5f * (localRimLeft.z + localRimRight.z);
         main.localPosition = new Vector3(main.localPosition.x, bottomY, zMid);
         left.localPosition = new Vector3(left.localPosition.x, bottomY, localRimLeft.z);
         right.localPosition = new Vector3(right.localPosition.x, bottomY, localRimRight.z);
 
-        float scaleY = heightMain / (mainBaseHeightLocal * mainParentScaleY);
-        float scaleZ = widthMain / (mainBaseWidthLocal * mainParentScaleZ);
-        main.localScale = new Vector3(main.localScale.x, scaleY, scaleZ);
+        float scaleY = heightMain / (mainBaseHeightLocal * Mathf.Max(1e-6f, mainParentScaleY));
+        float scaleZ = widthMain / (mainBaseWidthLocal * Mathf.Max(1e-6f, mainParentScaleZ));
+        main.localScale = SafeScale(main.localScale.x, scaleY, scaleZ);
 
         var mLB = rendMain.localBounds;
         float minY = mLB.min.y;
@@ -131,7 +165,7 @@ public class ScalableDoorComponent : MonoBehaviour
         float hsx = ParentScaleAlong(handle, Vector3.right);
         float hsy = ParentScaleAlong(handle, Vector3.up);
         float hsz = ParentScaleAlong(handle, Vector3.forward);
-        handle.localScale = new Vector3(
+        handle.localScale = SafeScale(
             handleBaseLocalScale.x / Mathf.Max(1e-6f, hsx),
             handleBaseLocalScale.y / Mathf.Max(1e-6f, hsy),
             handleBaseLocalScale.z / Mathf.Max(1e-6f, hsz)
@@ -141,12 +175,15 @@ public class ScalableDoorComponent : MonoBehaviour
     float ParentScaleAlong(Transform child, Vector3 childLocalAxis)
     {
         Transform p = child.parent ? child.parent : transform;
-        return p.TransformVector(child.localRotation * childLocalAxis).magnitude;
+        float magnitude = p.TransformVector(child.localRotation * childLocalAxis).magnitude;
+        return Mathf.Max(1e-6f, magnitude);
     }
 
     float WorldDistanceAlong(Transform t, Vector3 aWorld, Vector3 bWorld, Vector3 localAxis)
     {
         Vector3 axisW = t.TransformDirection(localAxis);
+        if (axisW.sqrMagnitude < 1e-12f)
+            return 0f;
         return Mathf.Abs(Vector3.Dot(bWorld - aWorld, axisW));
     }
 }

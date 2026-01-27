@@ -4,55 +4,102 @@ using UnityEngine;
 
 public abstract class MUES_AnchoredNetworkBehaviour : NetworkBehaviour
 {
-    [Tooltip("The local position offset from the room center anchor.")]
-    [Networked] public Vector3 LocalAnchorOffset { get; set; }
-
-    [Tooltip("The local rotation offset from the room center anchor.")]
-    [Networked] public Quaternion LocalAnchorRotationOffset { get; set; }
+    [Header("Anchored Object Settings")]
 
     [Tooltip("Whether to smoothly interpolate position and rotation when applying anchor transforms.")]
     public bool useAnchorSmoothing = false;
 
-    private readonly float anchorPositionSmoothTime = 0.06f;    // Smoothing time for position
-    private readonly float anchorRotationSmoothSpeed = 15f; // Smoothing speed for rotation
+    [HideInInspector][Networked] public Vector3 LocalAnchorOffset { get; set; }
+    [HideInInspector][Networked] public Quaternion LocalAnchorRotationOffset { get; set; }
 
-    private protected Transform anchor; // The room center anchor transform
+    [HideInInspector] public bool initialized;   // Flag indicating if the object has been initialized
+
+    private readonly float anchorPositionSmoothTime = 0.35f;    // Smoothing time for position
+    private readonly float anchorRotationSmoothSpeed = 7f; // Smoothing speed for rotation
+
+    private protected Transform anchor; // The anchor transform
     private protected bool anchorReady; // Flag indicating if the anchor is ready
 
-    private Vector3 anchorPosVelocity;  // Velocity used for position smoothing
+    private Vector3 anchorPosVelocity;  // Velocity reference for SmoothDamp
     private Quaternion anchorSmoothRot; // Smoothed rotation
-    private bool anchorSmoothingInitialized;    // Flag indicating if smoothing has been initialized
+    private bool anchorSmoothingInitialized;    // Flag to check if smoothing has been initialized
 
     /// <summary>
     /// Initializes the anchor by waiting for the networking instance and the room center anchor to become available.
     /// </summary>
     protected IEnumerator InitAnchorRoutine()
     {
+        yield return null;
+        ConsoleMessage.Send(true, "Starting AnchoredNetworkBehavior init.", Color.green);
+
         while (MUES_Networking.Instance == null)
             yield return null;
 
         var net = MUES_Networking.Instance;
 
-        while (anchor == null)
+        float timeout = 10f;
+        float elapsed = 0f;
+
+        while (anchor == null && elapsed < timeout)
         {
-            ConsoleMessage.Send(true, "Waiting for room center anchor...", Color.yellow);
-            anchor = net.isColocated ? MUES_Networking.GetRoomCenterAnchor() : MUES_Networking.GetRoomCenter();
-            yield return null;
+            if (net.isRemote)
+            {
+                var virtualRoom = MUES_RoomVisualizer.Instance?.virtualRoom;
+                if (virtualRoom != null)
+                {
+                    anchor = virtualRoom.transform;
+                    ConsoleMessage.Send(true, $"AnchoredNetworkBehavior - Remote client using virtualRoom as anchor: {anchor.name} at {anchor.position}, rot: {anchor.rotation.eulerAngles}", Color.cyan);
+                }
+            }
+            else
+            {
+                if (net.sceneParent != null)
+                {
+                    anchor = net.sceneParent;
+                    ConsoleMessage.Send(true, $"AnchoredNetworkBehavior - Using sceneParent as anchor: {anchor.name} at {anchor.position}, rot: {anchor.rotation.eulerAngles}", Color.cyan);
+                }
+                else
+                {
+                    if (net.anchorTransform == null)
+                    {
+                        var anchorGO = GameObject.FindWithTag("RoomCenterAnchor");
+                        if (anchorGO != null)
+                        {
+                            net.anchorTransform = anchorGO.transform;
+                            ConsoleMessage.Send(true, $"AnchoredNetworkBehavior - Found anchor via tag: {net.anchorTransform.name}", Color.cyan);
+                        }
+                    }
+                    
+                    if (net.anchorTransform != null && net.sceneParent == null)
+                    {
+                        net.InitSceneParent();
+                    }
+                }
+            }
+
+            if (anchor == null)
+            {
+                ConsoleMessage.Send(true, $"Waiting for anchor... (isRemote={net.isRemote}, sceneParent={net.sceneParent != null}, anchorTransform={net.anchorTransform != null}, virtualRoom={MUES_RoomVisualizer.Instance?.virtualRoom != null})", Color.yellow);
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+        }
+
+        if (anchor == null)
+        {
+            ConsoleMessage.Send(true, "Timeout waiting for anchor!", Color.red);
+            MUES_Networking.Instance.LeaveRoom();
+            yield break;
+        }
+
+        if (!net.isRemote && net.sceneParent != null)
+        {
+            transform.SetParent(net.sceneParent, true);
+            ConsoleMessage.Send(true, $"ANCHORED BEHAVIOR - Parented to SCENE_PARENT: {net.sceneParent.name} at {net.sceneParent.position}", Color.green);
         }
 
         anchorReady = true;
-    }
-
-    /// <summary>
-    /// Converts the current world position and rotation to local anchor offsets.
-    /// </summary>
-    protected void WorldToAnchor()
-    {
-        if (!anchorReady) return;
-
-        transform.GetPositionAndRotation(out var pos, out var rot);
-        LocalAnchorOffset = anchor.InverseTransformPoint(pos);
-        LocalAnchorRotationOffset = Quaternion.Inverse(anchor.rotation) * rot;
+        ConsoleMessage.Send(true, $"ANCHORED BEHAVIOR - Anchor ready: {anchor.name} at {anchor.position}, rot: {anchor.rotation.eulerAngles}", Color.green);
     }
 
     /// <summary>
@@ -60,14 +107,35 @@ public abstract class MUES_AnchoredNetworkBehaviour : NetworkBehaviour
     /// </summary>
     protected void AnchorToWorld()
     {
-        if (!anchorReady) return;
+        if (!anchorReady || anchor == null) return;
 
-        var targetPos = anchor.TransformPoint(LocalAnchorOffset);
-        var targetRot = anchor.rotation * LocalAnchorRotationOffset;
+        Vector3 targetPos;
+        Quaternion targetRot;
+        
+        try
+        {
+            targetPos = anchor.TransformPoint(LocalAnchorOffset);
+            targetRot = anchor.rotation * LocalAnchorRotationOffset;
+        }
+        catch (System.InvalidOperationException)
+        {
+            return;
+        }
 
-        if (!useAnchorSmoothing)
+        bool hasInputAuth = false;
+        try
+        {
+            hasInputAuth = Object != null && Object.IsValid && Object.HasInputAuthority;
+        }
+        catch { }
+
+        bool shouldSmooth = useAnchorSmoothing && !hasInputAuth;
+
+        if (!shouldSmooth)
         {
             transform.SetPositionAndRotation(targetPos, targetRot);
+            anchorPosVelocity = Vector3.zero;
+            anchorSmoothRot = targetRot;
             return;
         }
 
@@ -79,8 +147,29 @@ public abstract class MUES_AnchoredNetworkBehaviour : NetworkBehaviour
             return;
         }
 
-        var smoothedPos = Vector3.SmoothDamp(transform.position,targetPos,ref anchorPosVelocity,anchorPositionSmoothTime);
-        anchorSmoothRot = Quaternion.Slerp(anchorSmoothRot,targetRot,Time.deltaTime * anchorRotationSmoothSpeed);
+        var smoothedPos = Vector3.SmoothDamp(transform.position, targetPos, ref anchorPosVelocity, anchorPositionSmoothTime);
+        anchorSmoothRot = Quaternion.Slerp(anchorSmoothRot, targetRot, Time.deltaTime * anchorRotationSmoothSpeed);
         transform.SetPositionAndRotation(smoothedPos, anchorSmoothRot);
     }
+
+    /// <summary>
+    /// Converts the current world position and rotation to local anchor offsets.
+    /// </summary>
+    protected void WorldToAnchor()
+    {
+        if (!anchorReady || anchor == null) return;
+
+        try
+        {
+            transform.GetPositionAndRotation(out var pos, out var rot);
+            LocalAnchorOffset = anchor.InverseTransformPoint(pos);
+            LocalAnchorRotationOffset = Quaternion.Inverse(anchor.rotation) * rot;
+        }
+        catch (System.InvalidOperationException) { }
+    }
+
+    /// <summary>
+    /// Public wrapper to force update the anchor offset from current world position.
+    /// </summary>
+    public void ForceUpdateAnchorOffset() => WorldToAnchor();
 }

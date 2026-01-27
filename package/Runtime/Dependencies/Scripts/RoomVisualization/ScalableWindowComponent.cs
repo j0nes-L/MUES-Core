@@ -70,15 +70,52 @@ public class ScalableWindowComponent : MonoBehaviour
 
     private void LateUpdate()
     {
-        if (transform.parent != null && transform.parent.localScale != previousParentScale)
+        // Skip if parent is null or parent scale is zero/invalid (prevents Infinity/NaN errors)
+        if (transform.parent == null || !IsValidScale(transform.parent.localScale))
+            return;
+
+        if (transform.parent.localScale != previousParentScale)
         {
             ApplyTransform();
             previousParentScale = transform.parent.localScale;
         }
     }
 
+    bool IsValidScale(Vector3 scale)
+    {
+        const float minScale = 1e-6f;
+        return Mathf.Abs(scale.x) > minScale && 
+               Mathf.Abs(scale.y) > minScale && 
+               Mathf.Abs(scale.z) > minScale &&
+               !float.IsNaN(scale.x) && !float.IsNaN(scale.y) && !float.IsNaN(scale.z) &&
+               !float.IsInfinity(scale.x) && !float.IsInfinity(scale.y) && !float.IsInfinity(scale.z);
+    }
+
+    Vector3 SafeScale(float x, float y, float z)
+    {
+        return new Vector3(
+            IsValidFloat(x) ? x : 1f,
+            IsValidFloat(y) ? y : 1f,
+            IsValidFloat(z) ? z : 1f
+        );
+    }
+
+    bool IsValidFloat(float value)
+    {
+        return !float.IsNaN(value) && !float.IsInfinity(value);
+    }
+
     public void ApplyTransform()
     {
+        float bottomParentScaleX = ParentScaleAlong(bottom, Vector3.right);
+        float bottomParentScaleY = ParentScaleAlong(bottom, Vector3.up);
+        float topParentScaleX = ParentScaleAlong(top, Vector3.right);
+        float topParentScaleY = ParentScaleAlong(top, Vector3.up);
+
+        if (bottomParentScaleX < 1e-6f || bottomParentScaleY < 1e-6f || 
+            topParentScaleX < 1e-6f || topParentScaleY < 1e-6f)
+            return;
+
         var bLB = rendBottom.localBounds;
         Vector3 worldTopPointBottom = bottom.TransformPoint(new Vector3(bLB.center.x, bLB.max.y, bLB.center.z));
 
@@ -96,18 +133,13 @@ public class ScalableWindowComponent : MonoBehaviour
         Vector3 localRimRight = transform.InverseTransformPoint(worldRimRight);
         Vector3 localRimLeft = transform.InverseTransformPoint(worldRimLeft);
 
-        float bottomParentScaleX = ParentScaleAlong(bottom, Vector3.right);
-        float bottomParentScaleY = ParentScaleAlong(bottom, Vector3.up);
-        float topParentScaleX = ParentScaleAlong(top, Vector3.right);
-        float topParentScaleY = ParentScaleAlong(top, Vector3.up);
+        float bottomScaleX = bottomTargetWorldXY.x / (bottomBaseLocalXY.x * Mathf.Max(1e-6f, bottomParentScaleX));
+        float bottomScaleY = bottomTargetWorldXY.y / (bottomBaseLocalXY.y * Mathf.Max(1e-6f, bottomParentScaleY));
+        bottom.localScale = SafeScale(bottomScaleX, bottomScaleY, bottom.localScale.z);
 
-        float bottomScaleX = bottomTargetWorldXY.x / (bottomBaseLocalXY.x * bottomParentScaleX);
-        float bottomScaleY = bottomTargetWorldXY.y / (bottomBaseLocalXY.y * bottomParentScaleY);
-        bottom.localScale = new Vector3(bottomScaleX, bottomScaleY, bottom.localScale.z);
-
-        float topScaleX = topTargetWorldXY.x / (topBaseLocalXY.x * topParentScaleX);
-        float topScaleY = topTargetWorldXY.y / (topBaseLocalXY.y * topParentScaleY);
-        top.localScale = new Vector3(topScaleX, topScaleY, top.localScale.z);
+        float topScaleX = topTargetWorldXY.x / (topBaseLocalXY.x * Mathf.Max(1e-6f, topParentScaleX));
+        float topScaleY = topTargetWorldXY.y / (topBaseLocalXY.y * Mathf.Max(1e-6f, topParentScaleY));
+        top.localScale = SafeScale(topScaleX, topScaleY, top.localScale.z);
 
         float heightMain = WorldDistanceAlong(main, worldTopPointBottom, worldBottomPointTop, Vector3.up);
         float heightLeft = WorldDistanceAlong(left, worldTopPointBottom, worldBottomPointTop, Vector3.up);
@@ -123,24 +155,27 @@ public class ScalableWindowComponent : MonoBehaviour
         float mainParentScaleY = ParentScaleAlong(main, Vector3.up);
         float mainParentScaleZ = ParentScaleAlong(main, Vector3.forward);
 
-        float leftScaleX = leftTargetWorldXY.x / (leftBaseLocalXY.x * leftParentScaleX);
-        float rightScaleX = rightTargetWorldXY.x / (rightBaseLocalXY.x * rightParentScaleX);
-        float leftScaleY = heightLeft / (leftBaseLocalXY.y * leftParentScaleY);
-        float rightScaleY = heightRight / (rightBaseLocalXY.y * rightParentScaleY);
+        if (leftParentScaleY < 1e-6f || rightParentScaleY < 1e-6f || mainParentScaleY < 1e-6f)
+            return;
+
+        float leftScaleX = leftTargetWorldXY.x / (leftBaseLocalXY.x * Mathf.Max(1e-6f, leftParentScaleX));
+        float rightScaleX = rightTargetWorldXY.x / (rightBaseLocalXY.x * Mathf.Max(1e-6f, rightParentScaleX));
+        float leftScaleY = heightLeft / (leftBaseLocalXY.y * Mathf.Max(1e-6f, leftParentScaleY));
+        float rightScaleY = heightRight / (rightBaseLocalXY.y * Mathf.Max(1e-6f, rightParentScaleY));
         float leftScaleZ = originalZScaleSides / Mathf.Max(1e-6f, leftParentScaleZ);
         float rightScaleZ = originalZScaleSides / Mathf.Max(1e-6f, rightParentScaleZ);
 
-        left.localScale = new Vector3(leftScaleX, leftScaleY, leftScaleZ);
-        right.localScale = new Vector3(rightScaleX, rightScaleY, rightScaleZ);
+        left.localScale = SafeScale(leftScaleX, leftScaleY, leftScaleZ);
+        right.localScale = SafeScale(rightScaleX, rightScaleY, rightScaleZ);
 
         float zMid = 0.5f * (localRimLeft.z + localRimRight.z);
         main.localPosition = new Vector3(main.localPosition.x, localTopPointBottom.y, zMid);
         left.localPosition = new Vector3(left.localPosition.x, localTopPointBottom.y, localRimLeft.z);
         right.localPosition = new Vector3(right.localPosition.x, localTopPointBottom.y, localRimRight.z);
 
-        float scaleY = heightMain / (mainBaseHeightLocal * mainParentScaleY);
-        float scaleZ = widthMain / (mainBaseWidthLocal * mainParentScaleZ);
-        main.localScale = new Vector3(main.localScale.x, scaleY, scaleZ);
+        float scaleY = heightMain / (mainBaseHeightLocal * Mathf.Max(1e-6f, mainParentScaleY));
+        float scaleZ = widthMain / (mainBaseWidthLocal * Mathf.Max(1e-6f, mainParentScaleZ));
+        main.localScale = SafeScale(main.localScale.x, scaleY, scaleZ);
 
         float worldSpan = Vector3.Distance(worldRimLeft, worldRimRight);
 
@@ -171,7 +206,7 @@ public class ScalableWindowComponent : MonoBehaviour
             float sepScaleY = heightMain / (baseXY.y * Mathf.Max(1e-6f, sepParentScaleY));
             float sepScaleZ = originalZScaleSides / Mathf.Max(1e-6f, sepParentScaleZ);
 
-            sep.localScale = new Vector3(sepScaleX, sepScaleY, sepScaleZ);
+            sep.localScale = SafeScale(sepScaleX, sepScaleY, sepScaleZ);
 
             sep.localPosition = new Vector3(
                 localOnBottom.x,
@@ -184,12 +219,15 @@ public class ScalableWindowComponent : MonoBehaviour
     float ParentScaleAlong(Transform child, Vector3 childLocalAxis)
     {
         Transform p = child.parent != null ? child.parent : transform;
-        return p.TransformVector(child.localRotation * childLocalAxis).magnitude;
+        float magnitude = p.TransformVector(child.localRotation * childLocalAxis).magnitude;
+        return Mathf.Max(1e-6f, magnitude);
     }
 
     float WorldDistanceAlong(Transform t, Vector3 aWorld, Vector3 bWorld, Vector3 localAxis)
     {
         Vector3 axisW = t.TransformDirection(localAxis);
+        if (axisW.sqrMagnitude < 1e-12f)
+            return 0f;
         return Mathf.Abs(Vector3.Dot(bWorld - aWorld, axisW));
     }
 
