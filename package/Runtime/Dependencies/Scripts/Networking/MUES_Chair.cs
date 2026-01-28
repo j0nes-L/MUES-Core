@@ -1,5 +1,6 @@
 using Fusion;
 using System.Collections;
+using System.Reflection;
 using UnityEngine;
 
 public class MUES_Chair : MUES_AnchoredNetworkBehaviour
@@ -13,12 +14,15 @@ public class MUES_Chair : MUES_AnchoredNetworkBehaviour
     [Tooltip("Layer of the objects (Avatars) that trigger occupancy.")]
     public LayerMask detectionLayer;
 
-    [Networked] public NetworkBool IsOccupied { get; set; } // Whether the chair is currently occupied
+    [Networked] public NetworkBool IsOccupied { get; set; } // Indicates if the chair is currently occupied
 
-    private Vector2 detectionOffset = Vector2.zero; // Offset of the detection box from the chair's pivot
+    private Vector2 detectionOffset = Vector2.zero; // Offset of the detection box in local space
     private readonly Collider[] _results = new Collider[1]; // Reusable array for overlap results
 
-    private MUES_NetworkedTransform _networkedTransform; // Reference to the NetworkedTransform for grab state
+    private MUES_NetworkedTransform _networkedTransform;    // Reference to the NetworkedTransform component
+
+    private static readonly FieldInfo _isBeingGrabbedField = 
+        typeof(MUES_NetworkedTransform).GetField("_isBeingGrabbed", BindingFlags.NonPublic | BindingFlags.Instance);    // Reflection field info for _isBeingGrabbed
 
     public override void Spawned()
     {
@@ -64,12 +68,18 @@ public class MUES_Chair : MUES_AnchoredNetworkBehaviour
         initialized = true;
     }
 
+    /// <summary>
+    /// Called every frame to update the visual representation for non-authority clients.
+    /// </summary>
     public override void Render()
     {
         if (initialized && !Object.HasStateAuthority && !Object.HasInputAuthority && anchorReady)
             AnchorToWorld();
     }
 
+    /// <summary>
+    /// Gets called when the object is despawned.
+    /// </summary>
     public override void Despawned(NetworkRunner runner, bool hasState)
     {
         base.Despawned(runner, hasState);
@@ -87,42 +97,33 @@ public class MUES_Chair : MUES_AnchoredNetworkBehaviour
         }
     }
 
+    /// <summary>
+    /// Called on the network tick to check for occupancy.
+    /// </summary>
     public override void FixedUpdateNetwork()
     {
         if (!initialized || !anchorReady) return;
 
-        bool hasAuth = false;
         try
         {
             if (Object == null || !Object.IsValid) return;
-            hasAuth = Object.HasStateAuthority || Object.HasInputAuthority;
+            if (!Object.HasStateAuthority && !Object.HasInputAuthority) return;
         }
         catch { return; }
 
-        if (hasAuth)
+        if (_networkedTransform != null && IsNetworkedTransformGrabbed())
+            WorldToAnchor();
+
+        GetDetectionBoxParams(out Vector3 center, out Vector3 halfSize);
+
+        int hits = Physics.OverlapBoxNonAlloc(center, halfSize, _results, transform.rotation, detectionLayer);
+
+        try
         {
-            bool isBeingGrabbed = _networkedTransform != null && IsNetworkedTransformGrabbed();
-            
-            if (isBeingGrabbed)
-                WorldToAnchor();
-
-            Vector3 localOffset = new Vector3(detectionOffset.x, detectionHeight * 0.5f, detectionOffset.y);
-            Vector3 worldOffset = transform.rotation * localOffset; 
-            Vector3 center = transform.position + worldOffset;
-
-            Vector3 halfSize = new Vector3(detectionBaseSize.x * 0.5f, detectionHeight * 0.5f, detectionBaseSize.y * 0.5f);
-
-            int hits = Physics.OverlapBoxNonAlloc(center, halfSize, _results, transform.rotation, detectionLayer);
-
-            bool isHit = hits > 0;
-
-            try
-            {
-                if (IsOccupied != isHit)
-                    IsOccupied = isHit;
-            }
-            catch { }
+            if (IsOccupied != (hits > 0))
+                IsOccupied = hits > 0;
         }
+        catch { }
     }
 
     /// <summary>
@@ -130,30 +131,29 @@ public class MUES_Chair : MUES_AnchoredNetworkBehaviour
     /// </summary>
     private bool IsNetworkedTransformGrabbed()
     {
-        if (_networkedTransform == null) return false;
-        
-        var field = typeof(MUES_NetworkedTransform).GetField("_isBeingGrabbed", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        
-        if (field != null)
-            return (bool)field.GetValue(_networkedTransform);
-        
-        return false;
+        if (_networkedTransform == null || _isBeingGrabbedField == null) return false;
+        return (bool)_isBeingGrabbedField.GetValue(_networkedTransform);
+    }
+
+    /// <summary>
+    /// Gets the parameters for the detection box.
+    /// </summary>
+    private void GetDetectionBoxParams(out Vector3 center, out Vector3 halfSize)
+    {
+        Vector3 localOffset = new Vector3(detectionOffset.x, detectionHeight * 0.5f, detectionOffset.y);
+        center = transform.position + transform.rotation * localOffset;
+        halfSize = new Vector3(detectionBaseSize.x * 0.5f, detectionHeight * 0.5f, detectionBaseSize.y * 0.5f);
     }
 
     private void OnDrawGizmos()
     {
-        bool isOccupiedSafe = false;
-
-        if (Object != null && Object.IsValid)
-            isOccupiedSafe = IsOccupied;
+        bool isOccupiedSafe = Object != null && Object.IsValid && IsOccupied;
 
         Gizmos.color = isOccupiedSafe ? new Color(1f, 0f, 0f, 0.4f) : new Color(0f, 1f, 0f, 0.4f);
 
         Matrix4x4 oldMatrix = Gizmos.matrix;
 
-        Vector3 localOffset = new Vector3(detectionOffset.x, detectionHeight * 0.5f, detectionOffset.y);
-        Vector3 worldOffset = transform.rotation * localOffset;
-        Vector3 center = transform.position + worldOffset;
+        GetDetectionBoxParams(out Vector3 center, out _);
         
         Gizmos.matrix = Matrix4x4.TRS(center, transform.rotation, Vector3.one);
         Vector3 size = new Vector3(detectionBaseSize.x, detectionHeight, detectionBaseSize.y);

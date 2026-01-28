@@ -15,13 +15,13 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
     [Tooltip("Enable to see debug messages in the console.")]
     public bool debugMode;
 
-    private readonly string serverUrl = "https://00224466.xyz/MUES_models/";  // Server URL for model hosting
+    private readonly string serverUrl = "YOUR_SERVER_URL/MUES_Models";    // Base URL for model downloads
 
-    private Dictionary<string, Task<string>> _activeDownloads = new Dictionary<string, Task<string>>(); // Tracks active model download tasks
+    private readonly Dictionary<string, Task<string>> _activeDownloads = new Dictionary<string, Task<string>>();    // Tracks active model download tasks
 
-    private readonly System.Threading.SemaphoreSlim _instantiationSemaphore = new System.Threading.SemaphoreSlim(1, 1); // Semaphore to control model instantiation concurrency
+    private readonly System.Threading.SemaphoreSlim _instantiationSemaphore = new System.Threading.SemaphoreSlim(1, 1); // Semaphore to limit concurrent instantiations
 
-    public static MUES_NetworkedObjectManager Instance { get; private set; }
+    public static MUES_NetworkedObjectManager Instance { get; private set; }    // Singleton instance
 
     private void Awake()
     {
@@ -32,17 +32,19 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
     /// <summary>
     /// Instantiates a networked model at a position in front of the main camera. (HOST ONLY)
     /// </summary>
-    public void Instantiate(MUES_NetworkedTransform modelToInstantiate, Vector3 position, Quaternion rotation ,out MUES_NetworkedTransform instantiatedModel)
+    public void Instantiate(MUES_NetworkedTransform modelToInstantiate, Vector3 position, Quaternion rotation, out MUES_NetworkedTransform instantiatedModel)
     {
         instantiatedModel = null;
 
-        if (!MUES_RoomVisualizer.Instance.chairPlacementActive && (!MUES_Networking.Instance.isConnected || MUES_Networking.Instance.isRemote))
+        var net = MUES_Networking.Instance;
+        bool isChairPlacement = MUES_RoomVisualizer.Instance != null && MUES_RoomVisualizer.Instance.chairPlacementActive;
+
+        if (!isChairPlacement && (!net.isConnected || net.isRemote))
         {
             ConsoleMessage.Send(debugMode, "[MUES_ModelManager] Not connected / remote client - cannot instantiate networked models.", Color.yellow);
             return;
         }
 
-        var net = MUES_Networking.Instance;
         var runner = net.Runner;
 
         ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] Instantiate: SpawnPos={position}, isRemote={net.isRemote}", Color.cyan);
@@ -60,42 +62,41 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
     /// </summary>
     public void InstantiateFromServer(string modelFileName, Vector3 position, Quaternion rotation, bool makeGrabbable, bool spawnerGrabOnly = false)
     {
-        if (!MUES_Networking.Instance.isConnected || MUES_Networking.Instance.isRemote)
+        var net = MUES_Networking.Instance;
+
+        if (!net.isConnected || net.isRemote)
         {
             ConsoleMessage.Send(debugMode, "[MUES_ModelManager] Not connected / remote client - cannot instantiate networked models.", Color.yellow);
             return;
         }
 
-        var runner = MUES_Networking.Instance.Runner;  
+        var runner = net.Runner;
         ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] Calculated spawn pos: {position}, rot: {rotation.eulerAngles}", Color.cyan);
 
         if (runner.IsSharedModeMasterClient)
+        {
             SpawnModelContainer(modelFileName, makeGrabbable, spawnerGrabOnly, runner.LocalPlayer, position, rotation);
+            return;
+        }
+
+        Vector3 spawnPos = position;
+        Quaternion spawnRot = rotation;
+
+        if (net.sceneParent != null)
+        {
+            spawnPos = net.sceneParent.InverseTransformPoint(position);
+            spawnRot = Quaternion.Inverse(net.sceneParent.rotation) * rotation;
+            ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] Client converting spawn: pos {position} -> {spawnPos}, rot {rotation.eulerAngles} -> {spawnRot.eulerAngles}", Color.cyan);
+        }
         else
         {
-            if (MUES_Networking.Instance.sceneParent != null)
-            {
-                var sceneParent = MUES_Networking.Instance.sceneParent;
-                Vector3 relativePos = sceneParent.InverseTransformPoint(position);
-                Quaternion relativeRot = Quaternion.Inverse(sceneParent.rotation) * rotation;
-                
-                ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] Client converting spawn: pos {position} -> {relativePos}, rot {rotation.eulerAngles} -> {relativeRot.eulerAngles}", Color.cyan);
-                
-                if (MUES_SessionMeta.Instance != null) 
-                    MUES_SessionMeta.Instance.RequestSpawnModel(modelFileName, makeGrabbable, spawnerGrabOnly, runner.LocalPlayer, relativePos, relativeRot);
-                else 
-                    ConsoleMessage.Send(debugMode, "[MUES_ModelManager] SessionMeta not available - cannot request spawn.", Color.red);
-            }
-            else
-            {
-                ConsoleMessage.Send(debugMode, "[MUES_ModelManager] Client has no sceneParent - sending world position as fallback.", Color.yellow);
-                
-                if (MUES_SessionMeta.Instance != null) 
-                    MUES_SessionMeta.Instance.RequestSpawnModel(modelFileName, makeGrabbable, spawnerGrabOnly, runner.LocalPlayer, position, rotation);
-                else 
-                    ConsoleMessage.Send(debugMode, "[MUES_ModelManager] SessionMeta not available - cannot request spawn.", Color.red);
-            }
+            ConsoleMessage.Send(debugMode, "[MUES_ModelManager] Client has no sceneParent - sending world position as fallback.", Color.yellow);
         }
+
+        if (MUES_SessionMeta.Instance != null)
+            MUES_SessionMeta.Instance.RequestSpawnModel(modelFileName, makeGrabbable, spawnerGrabOnly, runner.LocalPlayer, spawnPos, spawnRot);
+        else
+            ConsoleMessage.Send(debugMode, "[MUES_ModelManager] SessionMeta not available - cannot request spawn.", Color.red);
     }
 
     /// <summary>
@@ -117,15 +118,14 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
             onBeforeSpawned: (runner, obj) =>
             {
                 var netTransform = obj.GetComponent<MUES_NetworkedTransform>();
-                if (netTransform != null)
-                {
-                    netTransform.ModelFileName = modelFileName;
-                    netTransform.SpawnerControlsTransform = spawnerGrabOnly;
-                    netTransform.IsGrabbable = makeGrabbable;
-                    netTransform.SpawnerPlayerId = ownerPlayer.PlayerId;
+                if (netTransform == null) return;
 
-                    ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] OnBeforeSpawned: Set IsGrabbable={makeGrabbable}, SpawnerControlsTransform={spawnerGrabOnly}, SpawnerPlayerId={ownerPlayer.PlayerId}", Color.cyan);
-                }
+                netTransform.ModelFileName = modelFileName;
+                netTransform.SpawnerControlsTransform = spawnerGrabOnly;
+                netTransform.IsGrabbable = makeGrabbable;
+                netTransform.SpawnerPlayerId = ownerPlayer.PlayerId;
+
+                ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] OnBeforeSpawned: Set IsGrabbable={makeGrabbable}, SpawnerControlsTransform={spawnerGrabOnly}, SpawnerPlayerId={ownerPlayer.PlayerId}", Color.cyan);
             }
         );
 
@@ -140,15 +140,13 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
     public Task<string> FetchModelFromServer(string modelFileName)
     {
         if (_activeDownloads.TryGetValue(modelFileName, out var existingTask))
-        {
             return existingTask;
-        }
 
         var task = FetchModelFromServerInternal(modelFileName);
         _activeDownloads[modelFileName] = task;
 
-        _ = task.ContinueWith(t => _activeDownloads.Remove(modelFileName));
-        
+        _ = task.ContinueWith(_ => _activeDownloads.Remove(modelFileName));
+
         return task;
     }
 
@@ -158,11 +156,12 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
     private async Task<string> FetchModelFromServerInternal(string modelFileName)
     {
         string targetDirectory = Path.Combine(Application.persistentDataPath, "Models");
-        if (!Directory.Exists(targetDirectory)) Directory.CreateDirectory(targetDirectory);
+        if (!Directory.Exists(targetDirectory))
+            Directory.CreateDirectory(targetDirectory);
 
         string filePath = Path.Combine(targetDirectory, modelFileName);
         string tempFilePath = filePath + ".tmp";
-        
+
         if (File.Exists(filePath))
         {
             FileInfo info = new FileInfo(filePath);
@@ -171,13 +170,13 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
                 ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] Model already cached at: {filePath}", Color.green);
                 return filePath;
             }
-            
+
             ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] Cached model is empty/corrupt, deleting: {filePath}", Color.yellow);
-            try { File.Delete(filePath); } catch { }
+            TryDeleteFile(filePath);
         }
 
         string url = $"{serverUrl}{modelFileName}";
-        
+
         using UnityWebRequest uwr = new UnityWebRequest(url, UnityWebRequest.kHttpVerbGET);
         uwr.downloadHandler = new DownloadHandlerFile(tempFilePath);
         var operation = uwr.SendWebRequest();
@@ -188,28 +187,32 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
         if (uwr.result != UnityWebRequest.Result.Success)
         {
             Debug.LogError($"[MUES_ModelManager] Download failed: {uwr.error}");
-
-            if (File.Exists(tempFilePath)) 
-            {
-               try { File.Delete(tempFilePath); } catch { }
-            }
-
+            TryDeleteFile(tempFilePath);
             return null;
         }
 
         try
         {
-            if (File.Exists(filePath)) File.Delete(filePath);
+            if (File.Exists(filePath))
+                File.Delete(filePath);
             File.Move(tempFilePath, filePath);
         }
         catch (IOException ex)
         {
-             Debug.LogError($"[MUES_ModelManager] Failed to rename temp file to final model path: {ex.Message}");
-             return null;
+            Debug.LogError($"[MUES_ModelManager] Failed to rename temp file to final model path: {ex.Message}");
+            return null;
         }
 
         ConsoleMessage.Send(debugMode, $"[MUES_ModelManager] Model downloaded and saved to: {filePath}", Color.green);
         return filePath;
+    }
+
+    /// <summary>
+    /// Tries to delete a file, ignoring any exceptions.
+    /// </summary>
+    private static void TryDeleteFile(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
     }
 
     /// <summary>
@@ -237,8 +240,5 @@ public class MUES_NetworkedObjectManager : MonoBehaviour
         }
     }
 
-    private void OnDestroy()
-    {
-        _instantiationSemaphore?.Dispose();
-    }
+    private void OnDestroy() => _instantiationSemaphore?.Dispose();
 }

@@ -12,7 +12,6 @@ using static Meta.XR.MultiplayerBlocks.Shared.CustomMatchmaking;
 using static OVRInput;
 using Meta.XR;
 
-
 #if UNITY_EDITOR
 using UnityEditor;
 #endif
@@ -55,14 +54,16 @@ public class MUES_Networking : MonoBehaviour
     private EnvironmentRaycastManager raycastManager; // Reference to the environment raycast manager.
     private SpriteRenderer depthIndex;  // Depth index sprite renderer.
 
-    private Camera mainCam => Camera.main; // Main camera reference.
+    private Camera _mainCam;
+    private Camera mainCam => _mainCam != null ? _mainCam : (_mainCam = Camera.main);
+
     private string currentRoomToken;   // The token for the current room.
-    private bool isCreatingRoom, isInitalizingRoomCreation = false; // Room creation state flags.
+    private bool isCreatingRoom, isInitalizingRoomCreation; // Room creation state flags.
     private EstimatedRoomCreationQuality estimatedRoomQuality = EstimatedRoomCreationQuality.Poor; // Estimated quality of the room creation.
 
     private float maxDistanceThreshold = 0.5f;  // Maximum distance in meters to consider the anchor valid.
     private float glitchTimeThreshold = 0.5f;   // Time in seconds to consider a glitch valid.
-    private float _glitchTimer = 0f;    // Timer for tracking how long the anchor has been out of bounds.
+    private float _glitchTimer;    // Timer for tracking how long the anchor has been out of bounds.
     private Vector3 _lastValidAnchorPos;    // Last valid position of the anchor.
     private Quaternion _lastValidAnchorRot; // Last valid rotation of the anchor.
     private bool _isFirstFrame = true;  // Flag to check if it's the first frame of update.
@@ -119,7 +120,6 @@ public class MUES_Networking : MonoBehaviour
     private void Start()
     {
         _runnerPrefab = FindFirstObjectByType<NetworkRunner>();
-
         _mruk = FindFirstObjectByType<MRUK>();
         _mruk.SceneSettings.TrackableAdded.AddListener(OnTrackableAdded);
 
@@ -137,13 +137,17 @@ public class MUES_Networking : MonoBehaviour
     {
         ConfirmRoomCreation();
         depthIndex.gameObject.SetActive(isInitalizingRoomCreation);
-
         UpdateSceneParent();
 
-        Vector3 camForwardFlat = Vector3.ProjectOnPlane(mainCam.transform.forward, Vector3.up).normalized;
+        if (!loadingText.activeSelf && !depthIndex.gameObject.activeSelf) return;
 
-        if (loadingText.activeSelf) loadingText.transform.position = mainCam.transform.position + camForwardFlat * 0.5f;
-        if (depthIndex.gameObject.activeSelf) depthIndex.transform.position = mainCam.transform.position + camForwardFlat * 0.7f;
+        Vector3 camForwardFlat = Vector3.ProjectOnPlane(mainCam.transform.forward, Vector3.up).normalized;
+        Vector3 camPos = mainCam.transform.position;
+
+        if (loadingText.activeSelf) 
+            loadingText.transform.position = camPos + camForwardFlat * 0.5f;
+        if (depthIndex.gameObject.activeSelf) 
+            depthIndex.transform.position = camPos + camForwardFlat * 0.7f;
     }
 
     void OnEnable() => OVRManager.HMDMounted += () => StartCoroutine(ShowLoadingOnHMDMounted());
@@ -183,13 +187,12 @@ public class MUES_Networking : MonoBehaviour
         if (!isInitalizingRoomCreation) return;
 
 #if !UNITY_EDITOR
-
         Ray camForward = new(mainCam.transform.position, mainCam.transform.forward);
         raycastManager.Raycast(camForward, out EnvironmentRaycastHit hit, 30);
 
         float distanceToHit = Vector3.Distance(mainCam.transform.position, hit.point);
 
-        switch(distanceToHit)
+        switch (distanceToHit)
         {
             case >= 4f:
                 estimatedRoomQuality = EstimatedRoomCreationQuality.Good;
@@ -205,23 +208,21 @@ public class MUES_Networking : MonoBehaviour
                 break;
         }
 
-        if (estimatedRoomQuality != EstimatedRoomCreationQuality.Poor)
+        if (estimatedRoomQuality == EstimatedRoomCreationQuality.Poor)
         {
-            if (GetDown(RawButton.RIndexTrigger, Controller.RTouch))
-            {
-                ConsoleMessage.Send(debugMode, "Room creation confirmed by user input.", Color.green);
-
-                isInitalizingRoomCreation = false;
-                InitSharedRoom();
-            }
+            ConsoleMessage.Send(debugMode, "Room creation aborted - Room quality poor.", Color.red);
+            return;
         }
-        else ConsoleMessage.Send(debugMode, "Room creation aborted - Room quality poor.", Color.red);
 
+        if (!GetDown(RawButton.RIndexTrigger, Controller.RTouch)) return;
+
+        ConsoleMessage.Send(debugMode, "Room creation confirmed by user input.", Color.green);
+        isInitalizingRoomCreation = false;
+        InitSharedRoom();
 #else
         ConsoleMessage.Send(debugMode, "UnityEditor - Skipping depth raycasting - Room scanning quality may be lower.", Color.yellow);
-
-                isInitalizingRoomCreation = false;
-                InitSharedRoom();
+        isInitalizingRoomCreation = false;
+        InitSharedRoom();
 #endif
     }
 
@@ -232,26 +233,34 @@ public class MUES_Networking : MonoBehaviour
     {
         var loadResult = await LoadSceneWithTimeout(_mruk, 5f);
 
-        if (loadResult == MRUK.LoadDeviceResult.Success)
-        {
-            ConsoleMessage.Send(debugMode, "Room geometry created - placing spatial anchor.", Color.green);
-
-            GameObject.Find("CEILING_EffectMesh").layer = GameObject.Find("FLOOR_EffectMesh").layer = 11;
-
-            MRUKRoom room = _mruk.GetCurrentRoom();
-            OVRCameraRig rig = FindFirstObjectByType<OVRCameraRig>();  
-            
-            Vector3 floorPos = new(room.FloorAnchor.transform.position.x, rig.trackingSpace.position.y, room.FloorAnchor.transform.position.z);
-            room.transform.position = floorPos; 
-
-            Quaternion flatRotation = Quaternion.Euler(0f, room.FloorAnchor.transform.rotation.eulerAngles.y, 0f);
-            spatialAnchorCore.InstantiateSpatialAnchor(roomMiddleAnchor, room.FloorAnchor.transform.position, flatRotation);
-        }
-        else
+        if (loadResult != MRUK.LoadDeviceResult.Success)
         {
             AbortLobbyCreation();
             ConsoleMessage.Send(debugMode, "Room scene loading failed or timed out. - Do you have a scanned room on your headset?", Color.red);
+            return;
         }
+
+        ConsoleMessage.Send(debugMode, "Room geometry created - placing spatial anchor.", Color.green);
+
+        GameObject.Find("CEILING_EffectMesh").layer = GameObject.Find("FLOOR_EffectMesh").layer = 11;
+
+        MRUKRoom room = _mruk.GetCurrentRoom();
+        OVRCameraRig rig = FindFirstObjectByType<OVRCameraRig>();
+
+        var floorAnchors = room.FloorAnchors;
+        if (floorAnchors == null || floorAnchors.Count == 0)
+        {
+            AbortLobbyCreation();
+            ConsoleMessage.Send(debugMode, "No floor anchors found in the room.", Color.red);
+            return;
+        }
+
+        var primaryFloor = floorAnchors[0];
+        Vector3 floorPos = new(primaryFloor.transform.position.x, rig.trackingSpace.position.y, primaryFloor.transform.position.z);
+        room.transform.position = floorPos;
+
+        Quaternion flatRotation = Quaternion.Euler(0f, primaryFloor.transform.rotation.eulerAngles.y, 0f);
+        spatialAnchorCore.InstantiateSpatialAnchor(roomMiddleAnchor, primaryFloor.transform.position, flatRotation);
     }
 
     /// <summary>
@@ -263,11 +272,7 @@ public class MUES_Networking : MonoBehaviour
         var timeoutTask = Task.Delay(TimeSpan.FromSeconds(timeoutSeconds));
 
         var finished = await Task.WhenAny(loadTask, timeoutTask);
-
-        if (finished == loadTask)
-            return loadTask.Result;
-
-        return MRUK.LoadDeviceResult.Failure;
+        return finished == loadTask ? loadTask.Result : MRUK.LoadDeviceResult.Failure;
     }
 
     /// <summary>
@@ -275,45 +280,42 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     public async void SaveAndShareAnchor(OVRSpatialAnchor anchor, OVRSpatialAnchor.OperationResult opResult)
     {
-        if (opResult == OVRSpatialAnchor.OperationResult.Success)
+        if (opResult != OVRSpatialAnchor.OperationResult.Success)
         {
-            ConsoleMessage.Send(debugMode, "Successfully placed spatial anchor - sharing anchor.", Color.green);
-
-            anchorGroupUuid = Guid.NewGuid();
-
-            var save = await anchor.SaveAnchorAsync();
-
-            if (save.Success)
-            {
-                InitSceneParent();
-
-                ConsoleMessage.Send(debugMode, $"Anchor transform set directly: {anchorTransform.name} at {anchorTransform.position}", Color.green);
-
-                var share = await anchor.ShareAsync(anchorGroupUuid);
-
-                if (share.Success)
-                {
-                    ConsoleMessage.Send(debugMode, "Anchor shared successfully. - Creating room.", Color.green);
-                    CreateRoom();
-                }
-                else
-                {
-                    ConsoleMessage.Send(debugMode, $"Anchor sharing failed: {share.Status} - Retrying", Color.red);
-
-                    _mruk.ClearScene();
-                    spatialAnchorCore.EraseAllAnchors();
-
-                    Task.Delay(500).Wait();
-                    InitSharedRoom();
-                }
-            }
-            else
-            {
-                ConsoleMessage.Send(debugMode, $"Anchor saving failed: {save.Status}", Color.red);
-                AbortLobbyCreation();
-            }
+            ConsoleMessage.Send(debugMode, $"Anchor spawning failed: {opResult}", Color.red);
+            return;
         }
-        else ConsoleMessage.Send(debugMode, $"Anchor spawning failed: {opResult}", Color.red);
+
+        ConsoleMessage.Send(debugMode, "Successfully placed spatial anchor - sharing anchor.", Color.green);
+
+        anchorGroupUuid = Guid.NewGuid();
+        var save = await anchor.SaveAnchorAsync();
+
+        if (!save.Success)
+        {
+            ConsoleMessage.Send(debugMode, $"Anchor saving failed: {save.Status}", Color.red);
+            AbortLobbyCreation();
+            return;
+        }
+
+        InitSceneParent();
+        ConsoleMessage.Send(debugMode, $"Anchor transform set directly: {anchorTransform.name} at {anchorTransform.position}", Color.green);
+
+        var share = await anchor.ShareAsync(anchorGroupUuid);
+
+        if (share.Success)
+        {
+            ConsoleMessage.Send(debugMode, "Anchor shared successfully. - Creating room.", Color.green);
+            CreateRoom();
+        }
+        else
+        {
+            ConsoleMessage.Send(debugMode, $"Anchor sharing failed: {share.Status} - Retrying", Color.red);
+            _mruk.ClearScene();
+            spatialAnchorCore.EraseAllAnchors();
+            await Task.Delay(500);
+            InitSharedRoom();
+        }
     }
 
     /// <summary>
@@ -334,22 +336,25 @@ public class MUES_Networking : MonoBehaviour
         sceneParent = GetOrCreateSceneParent();
         ConsoleMessage.Send(debugMode, sceneParent.gameObject.scene.IsValid() ? "InitSceneParent: Found existing SCENE_PARENT" : "InitSceneParent: Created new SCENE_PARENT", Color.cyan);
 
-        if (anchorTransform != null)
+        if (anchorTransform == null)
         {
-            var (anchorPos, flatRotation) = GetFloorAlignedPose(anchorTransform);
-            
-            sceneParent.SetPositionAndRotation(anchorPos, flatRotation);
-            _lastValidAnchorPos = anchorPos;
-            _lastValidAnchorRot = flatRotation;
-            _isFirstFrame = false;
-
-            ConsoleMessage.Send(debugMode, $"InitSceneParent: Synced SCENE_PARENT to anchor at {anchorPos}", Color.green);
-
-            if (MUES_SessionMeta.Instance != null && MUES_SessionMeta.Instance.Object != null && MUES_SessionMeta.Instance.Object.HasStateAuthority)
-                MUES_SessionMeta.Instance.UpdateHostSceneParentPose(anchorPos, flatRotation);
+            ConsoleMessage.Send(debugMode, "InitSceneParent: anchorTransform=NULL", Color.cyan);
+            return;
         }
 
-        ConsoleMessage.Send(debugMode, $"InitSceneParent: anchorTransform={(anchorTransform != null ? anchorTransform.name : "NULL")}", Color.cyan);
+        var (anchorPos, flatRotation) = GetFloorAlignedPose(anchorTransform);
+
+        sceneParent.SetPositionAndRotation(anchorPos, flatRotation);
+        _lastValidAnchorPos = anchorPos;
+        _lastValidAnchorRot = flatRotation;
+        _isFirstFrame = false;
+
+        ConsoleMessage.Send(debugMode, $"InitSceneParent: Synced SCENE_PARENT to anchor at {anchorPos}", Color.green);
+
+        if (MUES_SessionMeta.Instance != null && MUES_SessionMeta.Instance.Object != null && MUES_SessionMeta.Instance.Object.HasStateAuthority)
+            MUES_SessionMeta.Instance.UpdateHostSceneParentPose(anchorPos, flatRotation);
+
+        ConsoleMessage.Send(debugMode, $"InitSceneParent: anchorTransform={anchorTransform.name}", Color.cyan);
     }
 
     /// <summary>
@@ -360,7 +365,6 @@ public class MUES_Networking : MonoBehaviour
         _mruk.ClearScene();
         spatialAnchorCore.EraseAllAnchors();
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
-
         isCreatingRoom = false;
     }
 
@@ -371,7 +375,8 @@ public class MUES_Networking : MonoBehaviour
     {
         var result = await CreateSharedRoomWithToken();
 
-        if (result.IsSuccess) OnRoomCreated(result);
+        if (result.IsSuccess)
+            OnRoomCreated(result);
         else
         {
             ConsoleMessage.Send(debugMode, $"Room creation failed: {result.ErrorMessage}", Color.red);
@@ -393,7 +398,7 @@ public class MUES_Networking : MonoBehaviour
             GameMode = GameMode.Shared,
             Scene = GetSceneInfo(),
             SessionName = roomToken,
-            PlayerCount = maxPlayers, 
+            PlayerCount = maxPlayers,
         };
 
         var result = await runner.StartGame(startArgs);
@@ -412,7 +417,6 @@ public class MUES_Networking : MonoBehaviour
     private void OnRoomCreated(RoomOperationResult result)
     {
         ConsoleMessage.Send(debugMode, $"Room created successfully with token: {result.RoomToken}.", Color.green);
-
         currentRoomToken = result.RoomToken;
         isCreatingRoom = false;
     }
@@ -434,24 +438,11 @@ public class MUES_Networking : MonoBehaviour
         isConnected = true;
 
         // --- OBJECT INSTANTIATION TESTING - HOST ---
-
-        Vector3 camPos = mainCam.transform.position;
-        Vector3 camForward = mainCam.transform.forward;
-
-        Vector3 flatForward = Vector3.ProjectOnPlane(camForward, Vector3.up).normalized;
-        if (flatForward.sqrMagnitude < 0.001f)
-            flatForward = Vector3.forward;
-
-        Vector3 spawnPos = camPos + flatForward * 0.75f;
-        Quaternion spawnRot = Quaternion.LookRotation(flatForward, Vector3.up);
-
-        MUES_NetworkedObjectManager nom = MUES_NetworkedObjectManager.Instance;
-        nom.InstantiateFromServer("CMT_Model.glb", spawnPos, spawnRot, true, false);
-
+        var (spawnPos, spawnRot) = GetSpawnPoseInFrontOfCamera(0.75f);
+        MUES_NetworkedObjectManager.Instance.InstantiateFromServer("CMT_Model.glb", spawnPos, spawnRot, true, false);
         // ---
 
-        string qrPayload = $"MUESJoin_{currentRoomToken}";
-        StartCoroutine(SendQrString(qrPayload));
+        StartCoroutine(SendQrString($"MUESJoin_{currentRoomToken}"));
     }
 
     /// <summary>
@@ -461,26 +452,25 @@ public class MUES_Networking : MonoBehaviour
     {
         ConsoleMessage.Send(debugMode, $"QR payload: {qrPayload}", Color.cyan);
 
-        WWWForm form = new WWWForm();
+        WWWForm form = new();
         form.AddField("token", "MUES_2026");
         form.AddField("data", qrPayload);
 
-        using (UnityWebRequest www = UnityWebRequest.Post("https://00224466.xyz/mues/setqr.php", form))
-        {
-            yield return www.SendWebRequest();
+        using UnityWebRequest www = UnityWebRequest.Post("https://00224466.xyz/mues/setqr.php", form);
+        yield return www.SendWebRequest();
 
-            if (www.result == UnityWebRequest.Result.Success)
-            {
+        if (www.result == UnityWebRequest.Result.Success)
+        {
 #if UNITY_EDITOR
-                if(popUpQRCode) Application.OpenURL("https://newworkdesignlab.github.io/MUES");
+            if (popUpQRCode) Application.OpenURL("https://newworkdesignlab.github.io/MUES");
 #endif
-                ConsoleMessage.Send(debugMode, "QR-Request sent successfully.", Color.green);
-            }
-            else ConsoleMessage.Send(debugMode, $"QR-Request failed: {www.result} - {www.error}", Color.red);
+            ConsoleMessage.Send(debugMode, "QR-Request sent successfully.", Color.green);
         }
+        else
+            ConsoleMessage.Send(debugMode, $"QR-Request failed: {www.result} - {www.error}", Color.red);
     }
 
-#endregion
+    #endregion
 
     #region Joining - Host
 
@@ -496,7 +486,7 @@ public class MUES_Networking : MonoBehaviour
         StartCoroutine(SpawnAvatarMarker(player));
 
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
-        MUES_RoomVisualizer.Instance.CaptureRoom(); // later implementation: load room model from server
+        MUES_RoomVisualizer.Instance.CaptureRoom();
     }
 
     /// <summary>
@@ -504,8 +494,6 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     public void SetSessionMeta()
     {
-        MUES_SessionMeta _sessionMeta;
-
         ConsoleMessage.Send(debugMode, "Spawning Session Meta object...", Color.cyan);
 
         var spawnedMeta = Runner.Spawn(sessionMetaPrefab, Vector3.zero, Quaternion.identity, PlayerRef.None);
@@ -516,22 +504,24 @@ public class MUES_Networking : MonoBehaviour
             return;
         }
 
-        _sessionMeta = spawnedMeta.GetComponent<MUES_SessionMeta>();
+        var _sessionMeta = spawnedMeta.GetComponent<MUES_SessionMeta>();
 
-        if (_sessionMeta != null && _sessionMeta.Object != null && _sessionMeta.Object.HasStateAuthority)
+        if (_sessionMeta == null || _sessionMeta.Object == null || !_sessionMeta.Object.HasStateAuthority)
         {
-            _sessionMeta.AnchorGroup = anchorGroupUuid.ToString();
-            _sessionMeta.HostIP = LocalIPAddress();
-
-            if (sceneParent != null)
-            {
-                _sessionMeta.UpdateHostSceneParentPose(sceneParent.position, sceneParent.rotation);
-                ConsoleMessage.Send(debugMode, $"Session meta updated with sceneParent pose: pos={sceneParent.position}, rot={sceneParent.rotation.eulerAngles}", Color.cyan);
-            }
-
-            ConsoleMessage.Send(debugMode, $"Session meta set: AnchorGroup={_sessionMeta.AnchorGroup}, HostIP={_sessionMeta.HostIP}", Color.cyan);
+            ConsoleMessage.Send(debugMode, "Cannot set session meta - no state authority.", Color.red);
+            return;
         }
-        else ConsoleMessage.Send(debugMode, "Cannot set session meta - no state authority.", Color.red);
+
+        _sessionMeta.AnchorGroup = anchorGroupUuid.ToString();
+        _sessionMeta.HostIP = LocalIPAddress();
+
+        if (sceneParent != null)
+        {
+            _sessionMeta.UpdateHostSceneParentPose(sceneParent.position, sceneParent.rotation);
+            ConsoleMessage.Send(debugMode, $"Session meta updated with sceneParent pose: pos={sceneParent.position}, rot={sceneParent.rotation.eulerAngles}", Color.cyan);
+        }
+
+        ConsoleMessage.Send(debugMode, $"Session meta set: AnchorGroup={_sessionMeta.AnchorGroup}, HostIP={_sessionMeta.HostIP}", Color.cyan);
     }
 
     #endregion
@@ -552,25 +542,27 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     public void ScanQRCode(MRUKTrackable trackable)
     {
-        if (trackable.TrackableType == OVRAnchor.TrackableType.QRCode &&
-            trackable.MarkerPayloadString != null)
+        if (trackable.TrackableType != OVRAnchor.TrackableType.QRCode || trackable.MarkerPayloadString == null)
+            return;
+
+        string content = trackable.MarkerPayloadString;
+        ConsoleMessage.Send(debugMode, $"Detected QR code: {content}", Color.green);
+
+        var parts = content.Split('_');
+
+        if (parts.Length < 2 || parts[0] != "MUESJoin")
         {
-            string content = trackable.MarkerPayloadString;
-            ConsoleMessage.Send(debugMode, $"Detected QR code: {content}", Color.green);
-
-            var parts = content.Split('_');
-
-            if (parts.Length < 2 || parts[0] != "MUESJoin")
-            {
-                ConsoleMessage.Send(debugMode, "Detected QR Code - invalid QR-format for session joining.", Color.red);
-                return;
-            }
-
-            string roomToken = parts[1];
-
-            if (!IsConnectedToRoom() && !Runner.IsSharedModeMasterClient && !isCreatingRoom) JoinSessionFromCode(roomToken);
-            else ConsoleMessage.Send(debugMode, "Already connected to a session, not joining another.", Color.yellow);
+            ConsoleMessage.Send(debugMode, "Detected QR Code - invalid QR-format for session joining.", Color.red);
+            return;
         }
+
+        if (IsConnectedToRoom() || (Runner != null && Runner.IsSharedModeMasterClient) || isCreatingRoom)
+        {
+            ConsoleMessage.Send(debugMode, "Already connected to a session, not joining another.", Color.yellow);
+            return;
+        }
+
+        JoinSessionFromCode(parts[1]);
     }
 
     /// <summary>
@@ -581,8 +573,10 @@ public class MUES_Networking : MonoBehaviour
         isJoiningAsClient = true;
         var result = await JoinRoomByToken(roomToken);
 
-        if (!result.IsSuccess) Debug.LogError($"Room join failed: {result.ErrorMessage}");
-        else ConsoleMessage.Send(debugMode, "Joined room via QR code.", Color.green);
+        if (!result.IsSuccess)
+            Debug.LogError($"Room join failed: {result.ErrorMessage}");
+        else
+            ConsoleMessage.Send(debugMode, "Joined room via QR code.", Color.green);
     }
 
     /// <summary>
@@ -629,8 +623,8 @@ public class MUES_Networking : MonoBehaviour
 
         yield return WaitForJoinEnabled(meta);
 
-        if (!TryValidateAndParseSessionData(meta, out bool shouldAbort))
-            if (shouldAbort) yield break;
+        if (!TryValidateAndParseSessionData(meta, out bool shouldAbort) && shouldAbort)
+            yield break;
 
         ConfigureRemoteStatus(meta);
 
@@ -641,9 +635,8 @@ public class MUES_Networking : MonoBehaviour
 
             float anchorTimeout = 10f;
             float anchorElapsed = 0f;
-            
             OVRSpatialAnchor loadedAnchor = null;
-            
+
             while (anchorElapsed < anchorTimeout)
             {
                 var anchorGO = GameObject.FindWithTag("RoomCenterAnchor");
@@ -657,7 +650,7 @@ public class MUES_Networking : MonoBehaviour
                         break;
                     }
                 }
-                
+
                 ConsoleMessage.Send(debugMode, $"Waiting for anchor localization... (Localized={loadedAnchor?.Localized})", Color.yellow);
                 anchorElapsed += Time.deltaTime;
                 yield return null;
@@ -689,21 +682,8 @@ public class MUES_Networking : MonoBehaviour
         isConnected = true;
 
         // --- OBJECT INSTANTIATION TESTING - CLIENT ---
-
-        MUES_NetworkedObjectManager nom = MUES_NetworkedObjectManager.Instance;
-
-        Vector3 camPos = mainCam.transform.position;
-        Vector3 camForward = mainCam.transform.forward;
-
-        Vector3 flatForward = Vector3.ProjectOnPlane(camForward, Vector3.up).normalized;
-        if (flatForward.sqrMagnitude < 0.001f)
-            flatForward = Vector3.forward;
-
-        Vector3 spawnPos = camPos + flatForward * 0.75f;
-        Quaternion spawnRot = Quaternion.LookRotation(flatForward, Vector3.up);
-
-        nom.Instantiate(nom.testModelPrefab, spawnPos, spawnRot, out _);
-
+        var (spawnPos, spawnRot) = GetSpawnPoseInFrontOfCamera(0.75f);
+        MUES_NetworkedObjectManager.Instance.Instantiate(MUES_NetworkedObjectManager.Instance.testModelPrefab, spawnPos, spawnRot, out _);
         // ---
     }
 
@@ -723,7 +703,6 @@ public class MUES_Networking : MonoBehaviour
                 AbortJoin("Timeout waiting for Session Meta (10s). Cannot join session.");
                 yield break;
             }
-
             yield return null;
         }
     }
@@ -746,22 +725,23 @@ public class MUES_Networking : MonoBehaviour
     private bool TryValidateAndParseSessionData(MUES_SessionMeta meta, out bool shouldAbort)
     {
         shouldAbort = false;
+        string anchorGroupStr = meta.AnchorGroup.ToString();
+        string hostIPStr = meta.HostIP.ToString();
 
-        if (string.IsNullOrEmpty(meta.AnchorGroup.ToString()) || string.IsNullOrEmpty(meta.HostIP.ToString()))
+        if (string.IsNullOrEmpty(anchorGroupStr) || string.IsNullOrEmpty(hostIPStr))
         {
             AbortJoin("Session Meta data is incomplete. Cannot load shared anchors.");
             shouldAbort = true;
             return false;
         }
 
-        if (Guid.TryParse(meta.AnchorGroup.ToString(), out Guid id) && id != Guid.Empty)
+        if (Guid.TryParse(anchorGroupStr, out Guid id) && id != Guid.Empty)
         {
             anchorGroupUuid = id;
             return true;
         }
 
         AbortJoin($"Invalid or empty AnchorGroup '{meta.AnchorGroup}' (len={meta.AnchorGroup.Length})");
-
         shouldAbort = true;
         return false;
     }
@@ -776,7 +756,8 @@ public class MUES_Networking : MonoBehaviour
             isRemote = true;
             ConsoleMessage.Send(debugMode, "Forcing client to remote mode as per configuration.", Color.yellow);
         }
-        else isRemote = !IsSameNetwork24(meta.HostIP.ToString(), LocalIPAddress());
+        else
+            isRemote = !IsSameNetwork24(meta.HostIP.ToString(), LocalIPAddress());
 
         ConsoleMessage.Send(debugMode, $"Remote status determined: isRemote={isRemote}", Color.cyan);
     }
@@ -788,12 +769,11 @@ public class MUES_Networking : MonoBehaviour
     {
         if (anchorGroupUuid == Guid.Empty)
         {
-            AbortJoin("No valid anchorGroupUuid set  cannot load shared anchors.");
+            AbortJoin("No valid anchorGroupUuid set  cannot load shared anchors.");
             return false;
         }
 
         spatialAnchorCore.LoadAndInstantiateAnchorsFromGroup(roomMiddleAnchor, anchorGroupUuid);
-
         ConsoleMessage.Send(debugMode, $"Loading shared anchors for group: {anchorGroupUuid}", Color.cyan);
         return true;
     }
@@ -849,7 +829,6 @@ public class MUES_Networking : MonoBehaviour
     {
         ConsoleMessage.Send(debugMode, $"[MUES_NetworkingEvents] {errorMessage}", Color.red);
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
-
         LeaveRoom();
     }
 
@@ -858,18 +837,32 @@ public class MUES_Networking : MonoBehaviour
     #region Utility Methods
 
     /// <summary>
+    /// Gets a spawn position and rotation in front of the main camera.
+    /// </summary>
+    private (Vector3 position, Quaternion rotation) GetSpawnPoseInFrontOfCamera(float distance)
+    {
+        Vector3 camPos = mainCam.transform.position;
+        Vector3 flatForward = Vector3.ProjectOnPlane(mainCam.transform.forward, Vector3.up).normalized;
+
+        if (flatForward.sqrMagnitude < 0.001f)
+            flatForward = Vector3.forward;
+
+        return (camPos + flatForward * distance, Quaternion.LookRotation(flatForward, Vector3.up));
+    }
+
+    /// <summary>
     /// Calculates a floor-aligned position from a transform, using the tracking space Y if available.
     /// </summary>
     public static Vector3 GetFloorAlignedPosition(Transform sourceTransform, float? overrideY = null)
     {
         float yPos = overrideY ?? 0f;
-        
+
         if (!overrideY.HasValue)
         {
             var rig = FindFirstObjectByType<OVRCameraRig>();
             yPos = rig != null ? rig.trackingSpace.position.y : 0f;
         }
-        
+
         return new Vector3(sourceTransform.position.x, yPos, sourceTransform.position.z);
     }
 
@@ -878,11 +871,9 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     public static Quaternion GetFlatRotation(Transform sourceTransform)
     {
-        Vector3 forward = sourceTransform.forward;
-        Vector3 flatForward = Vector3.ProjectOnPlane(forward, Vector3.up).normalized;
-        
-        return flatForward.sqrMagnitude > 0.001f 
-            ? Quaternion.LookRotation(flatForward, Vector3.up) 
+        Vector3 flatForward = Vector3.ProjectOnPlane(sourceTransform.forward, Vector3.up).normalized;
+        return flatForward.sqrMagnitude > 0.001f
+            ? Quaternion.LookRotation(flatForward, Vector3.up)
             : Quaternion.identity;
     }
 
@@ -899,11 +890,7 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     public static Transform GetOrCreateSceneParent()
     {
-        GameObject parent = GameObject.Find("SCENE_PARENT");
-        
-        if (parent == null)
-            parent = new GameObject("SCENE_PARENT");
-            
+        GameObject parent = GameObject.Find("SCENE_PARENT") ?? new GameObject("SCENE_PARENT");
         return parent.transform;
     }
 
@@ -912,21 +899,20 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     private NetworkRunner InitializeNetworkRunner()
     {
-        if (_runnerPrefab == null) _runnerPrefab = FindFirstObjectByType<NetworkRunner>();
+        if (_runnerPrefab == null)
+            _runnerPrefab = FindFirstObjectByType<NetworkRunner>();
 
-        if (_runnerPrefab != null && _runnerPrefab.gameObject != this.gameObject)
+        if (_runnerPrefab != null && _runnerPrefab.gameObject != gameObject)
         {
             var runnerInstance = Instantiate(_runnerPrefab);
             _runnerPrefab.gameObject.SetActive(false);
-
             runnerInstance.name = "Session Runner";
             DontDestroyOnLoad(runnerInstance.gameObject);
             return runnerInstance;
         }
 
-        GameObject go = new GameObject("Session Runner");
+        GameObject go = new("Session Runner");
         var runner = go.AddComponent<NetworkRunner>();
-
         DontDestroyOnLoad(go);
         return runner;
     }
@@ -936,12 +922,9 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     private static NetworkSceneInfo GetSceneInfo()
     {
-        SceneRef sceneRef = default;
-        if (TryGetActiveSceneRef(out var activeSceneRef)) sceneRef = activeSceneRef;
-
         var sceneInfo = new NetworkSceneInfo();
-        if (sceneRef.IsValid) sceneInfo.AddSceneRef(sceneRef, LoadSceneMode.Additive);
-
+        if (TryGetActiveSceneRef(out var sceneRef) && sceneRef.IsValid)
+            sceneInfo.AddSceneRef(sceneRef, LoadSceneMode.Additive);
         return sceneInfo;
     }
 
@@ -956,7 +939,6 @@ public class MUES_Networking : MonoBehaviour
             sceneRef = default;
             return false;
         }
-
         sceneRef = SceneRef.FromIndex(activeScene.buildIndex);
         return true;
     }
@@ -985,10 +967,7 @@ public class MUES_Networking : MonoBehaviour
         var p1 = ip1.Split('.');
         var p2 = ip2.Split('.');
 
-        if (p1.Length != 4 || p2.Length != 4)
-            return false;
-
-        return p1[0] == p2[0] && p1[1] == p2[1] && p1[2] == p2[2];
+        return p1.Length == 4 && p2.Length == 4 && p1[0] == p2[0] && p1[1] == p2[1] && p1[2] == p2[2];
     }
 
     /// <summary>
@@ -1001,18 +980,16 @@ public class MUES_Networking : MonoBehaviour
             if (runner != null && runner.IsRunning)
                 return true;
         }
-
         return false;
     }
 
     /// <summary>
     /// Retrieves the transform of the room center (FLOOR object).
     /// </summary>
-    /// <returns></returns>
     public static Transform GetRoomCenter()
     {
-        var go = GameObject.Find("FLOOR").transform;
-        return go ? go.transform : null;
+        var go = GameObject.Find("FLOOR");
+        return go != null ? go.transform : null;
     }
 
     /// <summary>
@@ -1024,11 +1001,10 @@ public class MUES_Networking : MonoBehaviour
         if (manager == null) return;
 
         manager.isInsightPassthroughEnabled = !isRemote;
-
         mainCam.allowHDR = isRemote;
         mainCam.clearFlags = isRemote ? CameraClearFlags.Skybox : CameraClearFlags.SolidColor;
 
-        ConsoleMessage.Send(debugMode, $"Camera configured: isRemote={isRemote}, HDR={mainCam.allowHDR}, ClearFlags={mainCam.clearFlags}", Color.cyan);   
+        ConsoleMessage.Send(debugMode, $"Camera configured: isRemote={isRemote}, HDR={mainCam.allowHDR}, ClearFlags={mainCam.clearFlags}", Color.cyan);
     }
 
     /// <summary>
@@ -1052,12 +1028,11 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     private IEnumerator ShowLoadingOnHMDMounted()
     {
-        if (isConnected)
-        {
-            MUES_RoomVisualizer.Instance.HideSceneWhileLoading(true);
-            yield return new WaitForSeconds(3f);
-            MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
-        }     
+        if (!isConnected) yield break;
+
+        MUES_RoomVisualizer.Instance.HideSceneWhileLoading(true);
+        yield return new WaitForSeconds(3f);
+        MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
     }
 
     /// <summary>
@@ -1078,7 +1053,6 @@ public class MUES_Networking : MonoBehaviour
         }
 
         float distance = Vector3.Distance(_lastValidAnchorPos, currentAnchorPos);
-
         Vector3 targetPos;
         Quaternion targetRot;
 
@@ -1090,7 +1064,6 @@ public class MUES_Networking : MonoBehaviour
             {
                 targetPos = currentAnchorPos;
                 targetRot = currentAnchorRot;
-
                 _lastValidAnchorPos = currentAnchorPos;
                 _lastValidAnchorRot = currentAnchorRot;
             }
@@ -1103,10 +1076,8 @@ public class MUES_Networking : MonoBehaviour
         else
         {
             _glitchTimer = 0f;
-
             targetPos = currentAnchorPos;
             targetRot = currentAnchorRot;
-
             _lastValidAnchorPos = currentAnchorPos;
             _lastValidAnchorRot = currentAnchorRot;
         }
@@ -1150,7 +1121,8 @@ public class MUES_Networking : MonoBehaviour
             }
         }
 
-        if (Runner.IsSharedModeMasterClient) _previousMasterClient = Runner.LocalPlayer;
+        if (Runner.IsSharedModeMasterClient)
+            _previousMasterClient = Runner.LocalPlayer;
     }
 
     /// <summary>
@@ -1167,8 +1139,7 @@ public class MUES_Networking : MonoBehaviour
         {
             if (obj == null || !obj.IsValid) continue;
 
-            bool isAvatar = obj.TryGetComponent<MUES_AvatarMarker>(out _);
-            if (isAvatar && (obj.InputAuthority == runner.LocalPlayer || obj.InputAuthority == leftPlayer))
+            if (obj.TryGetComponent<MUES_AvatarMarker>(out _) && (obj.InputAuthority == runner.LocalPlayer || obj.InputAuthority == leftPlayer))
                 continue;
 
             objectsToProcess.Add(obj);
@@ -1209,13 +1180,10 @@ public class MUES_Networking : MonoBehaviour
         {
             if (obj == null || !obj.IsValid) continue;
 
-            if (obj.TryGetComponent<MUES_Chair>(out var chair))
+            if (obj.TryGetComponent<MUES_Chair>(out _) && obj.TryGetComponent<MUES_NetworkedTransform>(out var chairNetTransform))
             {
-                if (obj.TryGetComponent<MUES_NetworkedTransform>(out var chairNetTransform))
-                {
-                    chairNetTransform.RefreshGrabbableState();
-                    ConsoleMessage.Send(debugMode, $"Migration: Refreshed Chair grabbable via NetworkedTransform {obj.name}", Color.cyan);
-                }
+                chairNetTransform.RefreshGrabbableState();
+                ConsoleMessage.Send(debugMode, $"Migration: Refreshed Chair grabbable via NetworkedTransform {obj.name}", Color.cyan);
             }
 
             if (obj.TryGetComponent<MUES_NetworkedTransform>(out var netTransform))
@@ -1270,7 +1238,6 @@ public class MUES_Networking : MonoBehaviour
         foreach (var p in runner.ActivePlayers)
         {
             var avatar = GetAvatarForPlayer(runner, p);
-
             if (avatar != null && !avatar.IsRemote)
                 return false;
         }
@@ -1284,17 +1251,7 @@ public class MUES_Networking : MonoBehaviour
     public MUES_AvatarMarker GetAvatarForPlayer(NetworkRunner runner, PlayerRef player)
     {
         var playerObject = runner.GetPlayerObject(player);
-        if (playerObject != null) return playerObject.GetComponent<MUES_AvatarMarker>();
-        return null;
-    }
-
-    /// <summary>
-    /// Retrieves the avatar marker component for the specified NetworkObject.
-    /// </summary>
-    private MUES_AvatarMarker GetAvatarForPlayerObject(NetworkObject playerObject)
-    {
-        if (playerObject != null) return playerObject.GetComponent<MUES_AvatarMarker>();
-        return null;
+        return playerObject != null ? playerObject.GetComponent<MUES_AvatarMarker>() : null;
     }
 
     /// <summary>
@@ -1305,8 +1262,7 @@ public class MUES_Networking : MonoBehaviour
         for (int i = NetworkRunner.Instances.Count - 1; i >= 0; i--)
         {
             var runner = NetworkRunner.Instances[i];
-            if (runner == null)
-                continue;
+            if (runner == null) continue;
 
             if (runner.IsRunning)
             {
@@ -1317,7 +1273,7 @@ public class MUES_Networking : MonoBehaviour
 
         spatialAnchorCore.EraseAllAnchors();
 
-        if(Runner != null && Runner.IsSharedModeMasterClient) _mruk.ClearScene();
+        if (Runner != null && Runner.IsSharedModeMasterClient) _mruk.ClearScene();
         if (isRemote) Destroy(MUES_RoomVisualizer.Instance.virtualRoom);
         if (sceneParent != null) Destroy(sceneParent.gameObject);
 
@@ -1326,7 +1282,7 @@ public class MUES_Networking : MonoBehaviour
         heightCalibrationOffset = 0f;
 
         isConnected = isCreatingRoom = isJoiningAsClient = false;
-        isRemote = false;     
+        isRemote = false;
 
         ConfigureCamera();
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
@@ -1372,10 +1328,8 @@ public class MUES_Networking : MonoBehaviour
             return;
         }
 
-        string playerName = "Unknown";
-
         var playerInfo = GetPlayer(playerRef);
-        if (playerInfo.HasValue) playerName = playerInfo.Value.PlayerName.ToString();
+        string playerName = playerInfo.HasValue ? playerInfo.Value.PlayerName.ToString() : "Unknown";
 
         Runner.Disconnect(playerRef);
         ConsoleMessage.Send(true, $"Player \"{playerName}\" (Ref: {playerRef}) has been kicked from the session.", Color.yellow);
@@ -1387,10 +1341,12 @@ public class MUES_Networking : MonoBehaviour
     public void ToggleMutePlayer(PlayerRef playerRef)
     {
         var playerObject = Runner?.GetPlayerObject(playerRef);
-        var avatar = GetAvatarForPlayerObject(playerObject);
+        var avatar = playerObject != null ? playerObject.GetComponent<MUES_AvatarMarker>() : null;
 
-        if (avatar != null) SetMuteStatusForPlayer(playerRef, !avatar.IsMuted);
-        else ConsoleMessage.Send(debugMode, $"Cannot toggle mute for player {playerRef} - avatar not found.", Color.red);
+        if (avatar != null)
+            SetMuteStatusForPlayer(playerRef, !avatar.IsMuted);
+        else
+            ConsoleMessage.Send(debugMode, $"Cannot toggle mute for player {playerRef} - avatar not found.", Color.red);
     }
 
     /// <summary>
@@ -1405,7 +1361,7 @@ public class MUES_Networking : MonoBehaviour
         }
 
         var playerObject = Runner?.GetPlayerObject(playerRef);
-        var avatar = GetAvatarForPlayerObject(playerObject);
+        var avatar = playerObject != null ? playerObject.GetComponent<MUES_AvatarMarker>() : null;
 
         if (playerObject == null || avatar == null)
         {
@@ -1422,8 +1378,7 @@ public class MUES_Networking : MonoBehaviour
         MUES_SessionMeta.Instance.SetPlayerMuted(playerRef, mute);
         avatar.voiceAudioSource.mute = mute;
 
-        string playerName = avatar.PlayerName.ToString();
-        ConsoleMessage.Send(true, $"Player \"{playerName}\" has been {(mute ? "muted" : "unmuted")}.", Color.cyan);
+        ConsoleMessage.Send(true, $"Player \"{avatar.PlayerName}\" has been {(mute ? "muted" : "unmuted")}.", Color.cyan);
     }
 
     #endregion

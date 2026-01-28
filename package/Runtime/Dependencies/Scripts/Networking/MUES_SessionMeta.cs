@@ -3,6 +3,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Text;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 /// <summary>
@@ -32,13 +33,13 @@ public class MUES_SessionMeta : NetworkBehaviour
     [Tooltip("The host's scene parent world rotation for anchor synchronization.")]
     [Networked] public Quaternion HostSceneParentRotation { get; set; }
 
-    [HideInInspector][Networked, Capacity(4096)] public NetworkArray<byte> RoomDataBlob { get; }    // Compressed Room Data Blob
-    
-    [HideInInspector][Networked, Capacity(10)] public NetworkLinkedList<PlayerInfo> ConnectedPlayers => default;  // List of connected players
+    [HideInInspector][Networked, Capacity(4096)] public NetworkArray<byte> RoomDataBlob { get; }    // Compressed RoomData storage
 
-    private const int MAX_ROOM_DATA_SIZE = 4096;    // Maximum size for Room Data Blob
+    [HideInInspector][Networked, Capacity(10)] public NetworkLinkedList<PlayerInfo> ConnectedPlayers => default;    // List of connected players in the session
 
-    public static MUES_SessionMeta Instance { get; private set; }
+    private const int MAX_ROOM_DATA_SIZE = 4096;    // Maximum size for RoomData in bytes
+
+    public static MUES_SessionMeta Instance { get; private set; }   // Singleton instance
 
     public override void Spawned() => Instance = this;
 
@@ -68,11 +69,11 @@ public class MUES_SessionMeta : NetworkBehaviour
             RPC_RequestAnchorResync();
     }
 
+    /// <summary>
+    /// Requests the host to perform an anchor resync.
+    /// </summary>
     [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-    private void RPC_RequestAnchorResync()
-    {
-        PerformAnchorResync();
-    }
+    private void RPC_RequestAnchorResync() => PerformAnchorResync();
 
     /// <summary>
     /// Forces all anchored network objects to recalculate their offsets based on current world positions.
@@ -126,12 +127,11 @@ public class MUES_SessionMeta : NetworkBehaviour
         Vector3 worldSpawnPos = anchorRelativePosition;
         Quaternion worldSpawnRot = anchorRelativeRotation;
 
-        if (MUES_Networking.Instance != null && MUES_Networking.Instance.sceneParent != null)
+        var sceneParent = MUES_Networking.Instance?.sceneParent;
+        if (sceneParent != null)
         {
-            var sceneParent = MUES_Networking.Instance.sceneParent;
             worldSpawnPos = sceneParent.TransformPoint(anchorRelativePosition);
             worldSpawnRot = sceneParent.rotation * anchorRelativeRotation;
-
             ConsoleMessage.Send(true, $"[SessionMeta] Converted RPC spawn: pos {anchorRelativePosition} -> {worldSpawnPos}, rot {anchorRelativeRotation.eulerAngles} -> {worldSpawnRot.eulerAngles}", Color.cyan);
         }
         else
@@ -156,16 +156,13 @@ public class MUES_SessionMeta : NetworkBehaviour
             return;
         }
 
-        foreach (var player in ConnectedPlayers)
-            if (player.PlayerRef == playerRef) return;
+        if (ConnectedPlayers.Any(p => p.PlayerRef == playerRef)) return;
 
-        var newPlayer = new PlayerInfo
+        ConnectedPlayers.Add(new PlayerInfo
         {
             PlayerRef = playerRef,
             PlayerName = playerName,
-        };
-
-        ConnectedPlayers.Add(newPlayer);
+        });
         ConsoleMessage.Send(true, $"[SessionMeta] Player registered: {playerName} (Ref: {playerRef})", Color.green);
     }
 
@@ -180,8 +177,7 @@ public class MUES_SessionMeta : NetworkBehaviour
     /// </summary>
     public void UnregisterPlayer(PlayerRef playerRef)
     {
-        if (this == null) return;
-        if (Object == null || !Object.IsValid) return;
+        if (this == null || Object == null || !Object.IsValid) return;
         
         if (!Object.HasStateAuthority)
         {
@@ -198,15 +194,12 @@ public class MUES_SessionMeta : NetworkBehaviour
 
         try
         {
-            for (int i = ConnectedPlayers.Count - 1; i >= 0; i--)
+            var playerToRemove = ConnectedPlayers.FirstOrDefault(p => p.PlayerRef == playerRef);
+            if (playerToRemove.PlayerRef == playerRef)
             {
-                if (ConnectedPlayers[i].PlayerRef == playerRef)
-                {
-                    string name = ConnectedPlayers[i].PlayerName.ToString();
-                    ConnectedPlayers.Remove(ConnectedPlayers[i]);
-                    ConsoleMessage.Send(true, $"[SessionMeta] Player unregistered: {name} (Ref: {playerRef})", Color.yellow);
-                    return;
-                }
+                string name = playerToRemove.PlayerName.ToString();
+                ConnectedPlayers.Remove(playerToRemove);
+                ConsoleMessage.Send(true, $"[SessionMeta] Player unregistered: {name} (Ref: {playerRef})", Color.yellow);
             }
         }
         catch (System.Exception ex)
@@ -224,14 +217,7 @@ public class MUES_SessionMeta : NetworkBehaviour
     /// <summary>
     /// Gets all connected players as a list.
     /// </summary>
-    public List<PlayerInfo> GetAllPlayers()
-    {
-        var players = new List<PlayerInfo>();
-        foreach (var player in ConnectedPlayers)
-            players.Add(player);
-
-        return players;
-    }
+    public List<PlayerInfo> GetAllPlayers() => ConnectedPlayers.ToList();
 
     /// <summary>
     /// Gets a player by their PlayerRef.
@@ -301,8 +287,7 @@ public class MUES_SessionMeta : NetworkBehaviour
         try
         {
             string json = Decompress(data);
-            if (string.IsNullOrEmpty(json)) return null;
-            return JsonUtility.FromJson<RoomData>(json);
+            return string.IsNullOrEmpty(json) ? null : JsonUtility.FromJson<RoomData>(json);
         }
         catch (System.Exception ex)
         {
@@ -317,13 +302,10 @@ public class MUES_SessionMeta : NetworkBehaviour
     private static byte[] Compress(string str)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(str);
-        using (var msi = new MemoryStream(bytes))
         using (var mso = new MemoryStream())
         {
             using (var gs = new GZipStream(mso, CompressionMode.Compress))
-            {
-                msi.CopyTo(gs);
-            }
+                gs.Write(bytes, 0, bytes.Length);
             return mso.ToArray();
         }
     }

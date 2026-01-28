@@ -4,20 +4,20 @@ using UnityEngine;
 
 public abstract class MUES_AnchoredNetworkBehaviour : NetworkBehaviour
 {
-    [HideInInspector][Networked] public Vector3 LocalAnchorOffset { get; set; }
-    [HideInInspector][Networked] public Quaternion LocalAnchorRotationOffset { get; set; }
+    [HideInInspector][Networked] public Vector3 LocalAnchorOffset { get; set; } // Offset from the anchor in local space
+    [HideInInspector][Networked] public Quaternion LocalAnchorRotationOffset { get; set; }  // Offset from the anchor in local space
 
-    [HideInInspector] public bool initialized;   // Flag indicating if the object has been initialized
+    [HideInInspector] public bool initialized;  // Indicates if the anchor has been initialized
 
-    private readonly float anchorPositionSmoothTime = 0.35f;    // Smoothing time for position
-    private readonly float anchorRotationSmoothSpeed = 7f; // Smoothing speed for rotation
+    private readonly float anchorPositionSmoothTime = 0.35f;    // Smoothing time for position updates
+    private readonly float anchorRotationSmoothSpeed = 7f;  // Smoothing speed for rotation updates
 
-    private protected Transform anchor; // The anchor transform
-    private protected bool anchorReady; // Flag indicating if the anchor is ready
+    private protected Transform anchor; // The anchor transform to which this object is anchored
+    private protected bool anchorReady; // Indicates if the anchor is ready for use
 
-    private Vector3 anchorPosVelocity;  // Velocity reference for SmoothDamp
+    private Vector3 anchorPosVelocity;  // Velocity used for position smoothing
     private Quaternion anchorSmoothRot; // Smoothed rotation
-    private bool anchorSmoothingInitialized;    // Flag to check if smoothing has been initialized
+    private bool anchorSmoothingInitialized;    // Indicates if smoothing has been initialized
 
     /// <summary>
     /// Initializes the anchor by waiting for the networking instance and the room center anchor to become available.
@@ -39,12 +39,9 @@ public abstract class MUES_AnchoredNetworkBehaviour : NetworkBehaviour
         {
             if (net.isRemote)
             {
-                var virtualRoom = MUES_RoomVisualizer.Instance?.virtualRoom;
-                if (virtualRoom != null)
-                {
-                    anchor = virtualRoom.transform;
+                anchor = MUES_RoomVisualizer.Instance?.virtualRoom?.transform;
+                if (anchor != null)
                     ConsoleMessage.Send(true, $"AnchoredNetworkBehavior - Remote client using virtualRoom as anchor: {anchor.name} at {anchor.position}, rot: {anchor.rotation.eulerAngles}", Color.cyan);
-                }
             }
             else
             {
@@ -115,26 +112,12 @@ public abstract class MUES_AnchoredNetworkBehaviour : NetworkBehaviour
             return;
         }
 
-        bool hasInputAuth = false;
-        try
-        {
-            hasInputAuth = Object != null && Object.IsValid && Object.HasInputAuthority;
-        }
-        catch { }
+        bool hasInputAuth = Object != null && Object.IsValid && Object.HasInputAuthority;
 
-        bool shouldSmooth = !hasInputAuth;
-
-        if (!shouldSmooth)
+        if (hasInputAuth || !anchorSmoothingInitialized)
         {
             transform.SetPositionAndRotation(targetPos, targetRot);
             anchorPosVelocity = Vector3.zero;
-            anchorSmoothRot = targetRot;
-            return;
-        }
-
-        if (!anchorSmoothingInitialized)
-        {
-            transform.SetPositionAndRotation(targetPos, targetRot);
             anchorSmoothRot = targetRot;
             anchorSmoothingInitialized = true;
             return;

@@ -1,7 +1,6 @@
 using Fusion;
 using Fusion.Sockets;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -52,18 +51,16 @@ public class MUES_NetworkingEvents : MonoBehaviour, INetworkRunnerCallbacks
     /// </summary>
     public virtual void OnShutdown(NetworkRunner runner, ShutdownReason shutdownReason)
     {
-        MUES_Networking net = MUES_Networking.Instance;
+        var net = MUES_Networking.Instance;
 
         ConsoleMessage.Send(debugMode, "Network Runner Shut Down -- Cleaning up.", Color.yellow);
 
-        if (net != null)
-        {
-            if(MUES_Networking.Instance.spatialAnchorCore != null)
-                MUES_Networking.Instance.spatialAnchorCore.EraseAllAnchors();
+        if (net == null) return;
+
+        net.spatialAnchorCore?.EraseAllAnchors();
             
-            if (net.isRemote && MUES_RoomVisualizer.Instance != null) 
-                MUES_RoomVisualizer.Instance.ClearRoomVisualization();
-        }
+        if (net.isRemote)
+            MUES_RoomVisualizer.Instance?.ClearRoomVisualization();
     }
 
     #endregion

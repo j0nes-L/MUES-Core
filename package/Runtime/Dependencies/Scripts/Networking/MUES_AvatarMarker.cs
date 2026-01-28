@@ -6,7 +6,6 @@ using TMPro;
 using UnityEngine;
 using Photon.Voice.Unity;
 using Oculus.Platform;
-using Oculus.Platform.Models;
 
 public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
 {
@@ -107,7 +106,7 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
     /// </summary>
     private IEnumerator DelayedHMDMountVisibility()
     {
-        if (ShouldShowAvatarIgnoringHmd())
+        if (IsRemoteOrShowAvatars())
         {
             isWaitingAfterMount = true;
             IsStabilizing = true;
@@ -120,7 +119,6 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
         }
 
         IsHmdMounted = true;
-
         IsAfk = false;
         UpdateAfkMarker();
 
@@ -141,7 +139,6 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
             StopCoroutine(DelayedHMDMountVisibility());
 
             IsHmdMounted = false;
-
             IsAfk = true;
             UpdateAfkMarker();
 
@@ -201,8 +198,6 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
             yield return null;
         }
 
-        var meta = MUES_SessionMeta.Instance;
-
         while (Camera.main == null)
         {
             ConsoleMessage.Send(debugMode, "Avatar - Waiting for Main Camera...", Color.yellow);
@@ -214,7 +209,6 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
             ConsoleMessage.Send(debugMode, "Avatar - Waiting for OVR Camera Rig...", Color.yellow);
             var rig = FindFirstObjectByType<OVRCameraRig>();
             if (rig != null) trackingSpace = rig.trackingSpace;
-
             yield return null;
         }
 
@@ -225,16 +219,14 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
             var camPos = mainCam.position;
             float markerY = anchor != null ? anchor.position.y : 0f;
 
-            var markerWorldPos = new Vector3(camPos.x, markerY, camPos.z);
-            var markerWorldRot = Quaternion.Euler(0f, mainCam.eulerAngles.y, 0f);
-
-            transform.SetPositionAndRotation(markerWorldPos, markerWorldRot);
+            transform.SetPositionAndRotation(
+                new Vector3(camPos.x, markerY, camPos.z),
+                Quaternion.Euler(0f, mainCam.eulerAngles.y, 0f));
             WorldToAnchor();
 
             UserGuid = Guid.NewGuid().ToString();
             IsHmdMounted = OVRManager.isHmdPresent;
-
-            if (MUES_Networking.Instance != null) IsRemote = MUES_Networking.Instance.isRemote;
+            IsRemote = MUES_Networking.Instance != null && MUES_Networking.Instance.isRemote;
         }
         else
         {
@@ -258,8 +250,12 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
 
         SetupVoiceComponents();
 
-        if (destroyOwnMarker && Object.HasInputAuthority) StartCoroutine(DestroyOwnMarkerRoutine());
-        if (headRenderer != null) headRenderer.enabled = ShouldShowAvatar();
+        if (destroyOwnMarker && Object.HasInputAuthority) 
+            StartCoroutine(DestroyOwnMarkerRoutine());
+        
+        if (headRenderer != null) 
+            headRenderer.enabled = ShouldShowAvatar();
+        
         initialized = true;
 
         ConsoleMessage.Send(debugMode, "Avatar - Component Init ready. - Avatar Setup complete", Color.green);
@@ -283,14 +279,7 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
             fetchComplete = true;
         });
 
-        float timeout = 3f;
-        float elapsed = 0f;
-
-        while (!fetchComplete && elapsed < timeout)
-        {
-            elapsed += Time.deltaTime;
-            yield return null;
-        }
+        yield return WaitWithTimeout(() => fetchComplete, 3f);
 
         if (!string.IsNullOrEmpty(fetchedName))
         {
@@ -303,7 +292,6 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
         bool platformInitialized = false;
         bool platformInitComplete = false;
         bool userFetchComplete = false;
-        string platformError = null;
 
         bool alreadyInitialized = false;
         try
@@ -312,12 +300,7 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
         }
         catch (Exception ex)
         {
-            platformError = ex.Message;
             ConsoleMessage.Send(debugMode, $"Avatar - Exception checking platform init: {ex.Message}", Color.red);
-        }
-
-        if (platformError != null)
-        {
             SetPlayerName(fallbackPlayerName);
             yield break;
         }
@@ -332,10 +315,9 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
                 {
                     platformInitialized = !msg.IsError;
                     platformInitComplete = true;
-                    if (msg.IsError)
-                        ConsoleMessage.Send(debugMode, $"Avatar - Platform init error: {msg.GetError().Message}", Color.red);
-                    else
-                        ConsoleMessage.Send(debugMode, "Avatar - Oculus Platform initialized successfully.", Color.green);
+                    ConsoleMessage.Send(debugMode, 
+                        msg.IsError ? $"Avatar - Platform init error: {msg.GetError().Message}" : "Avatar - Oculus Platform initialized successfully.",
+                        msg.IsError ? Color.red : Color.green);
                 });
             }
             catch (Exception ex)
@@ -345,14 +327,7 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
                 yield break;
             }
 
-            timeout = 5f;
-            elapsed = 0f;
-
-            while (!platformInitComplete && elapsed < timeout)
-            {
-                elapsed += Time.deltaTime;
-                yield return null;
-            }
+            yield return WaitWithTimeout(() => platformInitComplete, 5f);
         }
         else
         {
@@ -384,21 +359,28 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
                 userFetchComplete = true;
             }
 
-            timeout = 5f;
-            elapsed = 0f;
-            while (!userFetchComplete && elapsed < timeout)
-            {
-                elapsed += Time.deltaTime;
-                yield return null;
-            }
+            yield return WaitWithTimeout(() => userFetchComplete, 5f);
         }
 
-        if (!string.IsNullOrEmpty(fetchedName))
-            SetPlayerName(fetchedName);
-        else
+        if (string.IsNullOrEmpty(fetchedName))
         {
             ConsoleMessage.Send(debugMode, $"Avatar - Using fallback name: {fallbackPlayerName}", Color.yellow);
-            SetPlayerName(fallbackPlayerName);
+            fetchedName = fallbackPlayerName;
+        }
+        
+        SetPlayerName(fetchedName);
+    }
+
+    /// <summary>
+    /// Waits for a condition to be true or until a timeout occurs.
+    /// </summary>
+    private IEnumerator WaitWithTimeout(Func<bool> condition, float timeout)
+    {
+        float elapsed = 0f;
+        while (!condition() && elapsed < timeout)
+        {
+            elapsed += Time.deltaTime;
+            yield return null;
         }
     }
 
@@ -409,9 +391,8 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
     {
         PlayerName = name;
         if (Object.HasInputAuthority && MUES_SessionMeta.Instance != null)
-        {
             MUES_SessionMeta.Instance.RegisterPlayer(Object.InputAuthority, name);
-        }
+        
         UpdateNameTagText();
     }
 
@@ -455,9 +436,7 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
 
         if (isCurrentlyStabilizing)
         {
-            headRenderer.enabled = false;
-            handRendererR.enabled = false;
-            handRendererL.enabled = false;
+            headRenderer.enabled = handRendererR.enabled = handRendererL.enabled = false;
             return;
         }
 
@@ -476,33 +455,30 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
             nameTag.localPosition = Vector3.Lerp(nameTag.localPosition, nameTagTargetPos, Time.deltaTime * 5f);
         }
 
-        var headTargetPos = transform.TransformPoint(HeadLocalPos);
-        var headTargetRot = transform.rotation * HeadLocalRot;
-        head.SetPositionAndRotation(headTargetPos, headTargetRot);
+        head.SetPositionAndRotation(
+            transform.TransformPoint(HeadLocalPos),
+            transform.rotation * HeadLocalRot);
 
         headRenderer.enabled = showFullAvatar;
 
+        UpdateHandMarker(showFullAvatar && RightHandVisible, handMarkerRight, handRendererR, 
+            RightHandLocalPos, RightHandLocalRot, ref rightHandVel, ref rightHandSmoothRot);
+        
+        UpdateHandMarker(showFullAvatar && LeftHandVisible, handMarkerLeft, handRendererL, 
+            LeftHandLocalPos, LeftHandLocalRot, ref leftHandVel, ref leftHandSmoothRot);
+    }
 
-        handRendererR.enabled = showFullAvatar && RightHandVisible;
+    private void UpdateHandMarker(bool visible, Transform marker, MeshRenderer renderer, 
+        Vector3 localPos, Quaternion localRot, ref Vector3 vel, ref Quaternion smoothRot)
+    {
+        renderer.enabled = visible;
+        if (!visible) return;
 
-        if (showFullAvatar && RightHandVisible)
-        {
-            var handTargetPosR = transform.TransformPoint(RightHandLocalPos);
-            var handSmoothPosR = Vector3.SmoothDamp(handMarkerRight.position, handTargetPosR, ref rightHandVel, handSmoothTime);
-            var handTargetRotR = transform.rotation * RightHandLocalRot;
-            rightHandSmoothRot = Quaternion.Slerp(handMarkerRight.rotation, handTargetRotR, Time.deltaTime * rotationSmoothSpeed);
-            handMarkerRight.SetPositionAndRotation(handSmoothPosR, rightHandSmoothRot);
-        }
-
-        handRendererL.enabled = showFullAvatar && LeftHandVisible;
-        if (showFullAvatar && LeftHandVisible)
-        {
-            var handTargetPosL = transform.TransformPoint(LeftHandLocalPos);
-            var handSmoothPosL = Vector3.SmoothDamp(handMarkerLeft.position, handTargetPosL, ref leftHandVel, handSmoothTime);
-            var handTargetRotL = transform.rotation * LeftHandLocalRot;
-            leftHandSmoothRot = Quaternion.Slerp(handMarkerLeft.rotation, handTargetRotL, Time.deltaTime * rotationSmoothSpeed);
-            handMarkerLeft.SetPositionAndRotation(handSmoothPosL, leftHandSmoothRot);
-        }
+        var targetPos = transform.TransformPoint(localPos);
+        var smoothPos = Vector3.SmoothDamp(marker.position, targetPos, ref vel, handSmoothTime);
+        var targetRot = transform.rotation * localRot;
+        smoothRot = Quaternion.Slerp(marker.rotation, targetRot, Time.deltaTime * rotationSmoothSpeed);
+        marker.SetPositionAndRotation(smoothPos, smoothRot);
     }
 
     /// <summary>
@@ -511,88 +487,74 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
     public override void FixedUpdateNetwork()
     {
         if (!initialized || trackingSpace == null || !anchorReady) return;
+        if (!Object.HasInputAuthority) return;
 
-        if (Object.HasInputAuthority) WorldToAnchor();
-        else return;
+        WorldToAnchor();
 
         mainCam.GetPositionAndRotation(out var headWorldPos, out var headWorldRot);
 
         HeadLocalPos = transform.InverseTransformPoint(headWorldPos);
         HeadLocalRot = Quaternion.Inverse(transform.rotation) * headWorldRot;
 
-        if (ShouldShowAvatar())
+        if (!ShouldShowAvatar()) return;
+
+        bool handTracking =
+            OVRInput.IsControllerConnected(OVRInput.Controller.RHand) ||
+            OVRInput.IsControllerConnected(OVRInput.Controller.LHand);
+
+        var ctrlR = handTracking ? OVRInput.Controller.RHand : OVRInput.Controller.RTouch;
+        var ctrlL = handTracking ? OVRInput.Controller.LHand : OVRInput.Controller.LTouch;
+
+        RightHandVisible = OVRInput.IsControllerConnected(ctrlR);
+        LeftHandVisible = OVRInput.IsControllerConnected(ctrlL);
+
+        if (RightHandVisible)
         {
-            var handTracking =
-                OVRInput.IsControllerConnected(OVRInput.Controller.RHand) ||
-                OVRInput.IsControllerConnected(OVRInput.Controller.LHand);
-
-            var ctrlR = handTracking ? OVRInput.Controller.RHand : OVRInput.Controller.RTouch;
-            var ctrlL = handTracking ? OVRInput.Controller.LHand : OVRInput.Controller.LTouch;
-
-            var rightConnected = OVRInput.IsControllerConnected(ctrlR);
-            var leftConnected = OVRInput.IsControllerConnected(ctrlL);
-
-            RightHandVisible = rightConnected;
-            LeftHandVisible = leftConnected;
-
-            const float controllerBackOffset = 0.05f;
-
-            if (rightConnected)
-            {
-                var ctrlLocalPosR = OVRInput.GetLocalControllerPosition(ctrlR);
-                var ctrlLocalRotR = OVRInput.GetLocalControllerRotation(ctrlR);
-
-                var ctrlWorldPosR = trackingSpace.TransformPoint(ctrlLocalPosR);
-                var ctrlWorldRotR = trackingSpace.rotation * ctrlLocalRotR;
-
-                Quaternion markerWorldRotR;
-                Vector3 markerWorldPosR;
-
-                if (handTracking)
-                {
-                    Vector3 forwardR = ctrlWorldRotR * Vector3.right;
-                    Vector3 upR = ctrlWorldRotR * Vector3.up;
-                    markerWorldRotR = Quaternion.LookRotation(forwardR, upR);
-                    markerWorldPosR = ctrlWorldPosR;
-                }
-                else
-                {
-                    markerWorldRotR = ctrlWorldRotR;
-                    markerWorldPosR = ctrlWorldPosR + markerWorldRotR * Vector3.back * controllerBackOffset;
-                }
-
-                RightHandLocalPos = transform.InverseTransformPoint(markerWorldPosR);
-                RightHandLocalRot = Quaternion.Inverse(transform.rotation) * markerWorldRotR;
-            }
-
-            if (leftConnected)
-            {
-                var ctrlLocalPosL = OVRInput.GetLocalControllerPosition(ctrlL);
-                var ctrlLocalRotL = OVRInput.GetLocalControllerRotation(ctrlL);
-
-                var ctrlWorldPosL = trackingSpace.TransformPoint(ctrlLocalPosL);
-                var ctrlWorldRotL = trackingSpace.rotation * ctrlLocalRotL;
-
-                Quaternion markerWorldRotL;
-                Vector3 markerWorldPosL;
-
-                if (handTracking)
-                {
-                    Vector3 forwardL = ctrlWorldRotL * Vector3.right;
-                    Vector3 upL = ctrlWorldRotL * Vector3.up;
-                    markerWorldRotL = Quaternion.LookRotation(forwardL, upL);
-                    markerWorldPosL = ctrlWorldPosL;
-                }
-                else
-                {
-                    markerWorldRotL = ctrlWorldRotL;
-                    markerWorldPosL = ctrlWorldPosL + markerWorldRotL * Vector3.back * controllerBackOffset;
-                }
-
-                LeftHandLocalPos = transform.InverseTransformPoint(markerWorldPosL);
-                LeftHandLocalRot = Quaternion.Inverse(transform.rotation) * markerWorldRotL;
-            }
+            GetHandNetworkData(ctrlR, handTracking, out var posR, out var rotR);
+            RightHandLocalPos = posR;
+            RightHandLocalRot = rotR;
         }
+
+        if (LeftHandVisible)
+        {
+            GetHandNetworkData(ctrlL, handTracking, out var posL, out var rotL);
+            LeftHandLocalPos = posL;
+            LeftHandLocalRot = rotL;
+        }
+    }
+
+    /// <summary>
+    /// Gets the local position and rotation of a hand marker for network synchronization.
+    /// </summary>
+    private void GetHandNetworkData(OVRInput.Controller ctrl, bool handTracking, 
+        out Vector3 localPos, out Quaternion localRot)
+    {
+        const float controllerBackOffset = 0.05f;
+
+        var ctrlLocalPos = OVRInput.GetLocalControllerPosition(ctrl);
+        var ctrlLocalRot = OVRInput.GetLocalControllerRotation(ctrl);
+
+        var ctrlWorldPos = trackingSpace.TransformPoint(ctrlLocalPos);
+        var ctrlWorldRot = trackingSpace.rotation * ctrlLocalRot;
+
+        Vector3 markerWorldPos;
+        Quaternion markerWorldRot;
+
+        if (handTracking)
+        {
+            Vector3 forward = ctrlWorldRot * Vector3.right;
+            Vector3 up = ctrlWorldRot * Vector3.up;
+            markerWorldRot = Quaternion.LookRotation(forward, up);
+            markerWorldPos = ctrlWorldPos;
+        }
+        else
+        {
+            markerWorldRot = ctrlWorldRot;
+            markerWorldPos = ctrlWorldPos + markerWorldRot * Vector3.back * controllerBackOffset;
+        }
+
+        localPos = transform.InverseTransformPoint(markerWorldPos);
+        localRot = Quaternion.Inverse(transform.rotation) * markerWorldRot;
     }
 
     /// <summary>
@@ -606,42 +568,41 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
             return;
         }
 
-        bool shouldShowAfk = IsAfk && ShouldShowAfkMarker();
+        bool shouldShowAfk = IsAfk && IsRemoteOrShowAvatars();
 
-        if (shouldShowAfk)
+        if (!shouldShowAfk)
         {
-            afkMarker.SetActive(true);
-
-            if (anchor != null)
-            {
-                Vector3 worldPos = anchor.TransformPoint(AfkMarkerLocalPos);
-                Quaternion worldRot = anchor.rotation * AfkMarkerLocalRot;
-                afkMarker.transform.SetPositionAndRotation(worldPos, worldRot);
-            }
-
-            Transform afkCanvas = afkMarker.transform.GetChild(0);
-
-            if (afkCanvas != null && mainCam != null)
-            {
-                Vector3 toCam = mainCam.position - afkCanvas.position;
-                if (toCam.sqrMagnitude > 0.0001f)
-                    afkCanvas.rotation = Quaternion.LookRotation(toCam.normalized, Vector3.up);
-            }
+            afkMarker.SetActive(false);
+            return;
         }
-        else afkMarker.SetActive(false);
+
+        afkMarker.SetActive(true);
+
+        if (anchor != null)
+        {
+            Vector3 worldPos = anchor.TransformPoint(AfkMarkerLocalPos);
+            Quaternion worldRot = anchor.rotation * AfkMarkerLocalRot;
+            afkMarker.transform.SetPositionAndRotation(worldPos, worldRot);
+        }
+
+        Transform afkCanvas = afkMarker.transform.GetChild(0);
+
+        if (afkCanvas != null && mainCam != null)
+        {
+            Vector3 toCam = mainCam.position - afkCanvas.position;
+            if (toCam.sqrMagnitude > 0.0001f)
+                afkCanvas.rotation = Quaternion.LookRotation(toCam.normalized, Vector3.up);
+        }
     }
 
     /// <summary>
-    /// Determines whether the AFK marker should be shown for this avatar.
+    /// Signals when the muted state changes to update voice components.
     /// </summary>
-    private bool ShouldShowAfkMarker()
+    private bool IsRemoteOrShowAvatars()
     {
         var net = MUES_Networking.Instance;
-
         if (net == null) return false;
-        if (net.isRemote || IsRemote) return true;
-
-        return net.showAvatarsForColocated;
+        return net.isRemote || IsRemote || net.showAvatarsForColocated;
     }
 
     /// <summary>
@@ -652,9 +613,7 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
         if (anchor == null) return;
 
         AfkMarkerLocalPos = anchor.InverseTransformPoint(head.position);
-
-        Quaternion headYRotation = Quaternion.Euler(0f, head.eulerAngles.y, 0f);
-        AfkMarkerLocalRot = Quaternion.Inverse(anchor.rotation) * headYRotation;
+        AfkMarkerLocalRot = Quaternion.Inverse(anchor.rotation) * Quaternion.Euler(0f, head.eulerAngles.y, 0f);
 
         ConsoleMessage.Send(debugMode, $"Avatar - Saved AFK position: {AfkMarkerLocalPos}", Color.cyan);
     }
@@ -665,15 +624,8 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
     private bool ShouldShowAvatar()
     {
         bool isCurrentlyStabilizing = Object.HasInputAuthority ? isWaitingAfterMount : IsStabilizing;
-
         if (!IsHmdMounted || isCurrentlyStabilizing) return false;
-
-        var net = MUES_Networking.Instance;
-
-        if (net == null) return false;
-        if (net.isRemote || IsRemote) return true;
-
-        return net.showAvatarsForColocated;
+        return IsRemoteOrShowAvatars();
     }
 
     /// <summary>
@@ -682,26 +634,12 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
     private bool ShouldShowNameTagOnly()
     {
         bool isCurrentlyStabilizing = Object.HasInputAuthority ? isWaitingAfterMount : IsStabilizing;
-
         if (!IsHmdMounted || isCurrentlyStabilizing) return false;
 
         var net = MUES_Networking.Instance;
         if (net == null || net.isRemote || IsRemote || net.showAvatarsForColocated) return false;
 
         return true;
-    }
-
-    /// <summary>
-    /// Checks if avatar would be visible (ignoring HMD state) - used for mount delay logic.
-    /// </summary>
-    private bool ShouldShowAvatarIgnoringHmd()
-    {
-        var net = MUES_Networking.Instance;
-
-        if (net == null) return false;
-        if (net.isRemote || IsRemote) return true;
-
-        return net.showAvatarsForColocated;
     }
 
     /// <summary>
@@ -712,10 +650,7 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
         if (head != null)
         {
             for (int i = head.childCount - 1; i >= 0; i--)
-            {
-                Transform child = head.GetChild(i);
-                Destroy(child.gameObject);
-            }
+                Destroy(head.GetChild(i).gameObject);
 
             if (headRenderer != null)
                 headRenderer.enabled = false;
@@ -731,7 +666,6 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
         handRendererR = handRendererL = null;
         handMarkerRight = handMarkerLeft = null;
         nameTagCanvasGroup = null;
-
 
         ConsoleMessage.Send(debugMode, "Avatar - Own marker visuals destroyed, head tracking preserved for voice.", Color.cyan);
     }
@@ -754,7 +688,6 @@ public class MUES_AvatarMarker : MUES_AnchoredNetworkBehaviour
         bool enablePlayback = !isLocal && (amIRemote || IsRemote);
 
         voiceSpeaker.enabled = enablePlayback;
-
         voiceAudioSource.enabled = enablePlayback;
         voiceAudioSource.mute = !enablePlayback;
 

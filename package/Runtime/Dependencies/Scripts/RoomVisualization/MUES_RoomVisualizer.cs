@@ -7,21 +7,14 @@ using System.Collections.Generic;
 using UnityEngine;
 using System.Linq;
 using static OVRInput;
-using System.IO;
 using static Oculus.Interaction.TransformerUtils;
 using Fusion;
-
-#if UNITY_EDITOR
-using UnityEditor;
-#endif
 
 public class MUES_RoomVisualizer : MonoBehaviour
 {
     [Header("General Settings:")]
     [Tooltip("Button to save the room after placement.")]
     public Button saveRoomButton = Button.Two;
-    [Tooltip("Data to load the room from.")]
-    [Optional] public string roomDataPath;
 
     [Header("Object References:")]
     [Tooltip("Prefab for loading particles.")]
@@ -40,8 +33,6 @@ public class MUES_RoomVisualizer : MonoBehaviour
     [Header("Debug Settings:")]
     [Tooltip("Enables debug mode for displaying console messages.")]
     public bool debugMode = true;
-    [Tooltip("Whether to save the captured room to a file.")]
-    public bool saveRoom;
 
     [HideInInspector] public bool HasRoomData => currentRoomData != null; // Indicates if room data is available.
     [HideInInspector] public bool chairPlacementActive => chairPlacement; // Indicates if chair placement mode is active.
@@ -74,10 +65,9 @@ public class MUES_RoomVisualizer : MonoBehaviour
 
     private void Awake()
     {
-        if(Instance == null) 
-            Instance = this;
+        if (Instance == null) Instance = this;
 
-        ImmersiveSceneDebugger debugger = FindFirstObjectByType<ImmersiveSceneDebugger>();
+        var debugger = FindFirstObjectByType<ImmersiveSceneDebugger>();
 
         if (debugger && isActiveAndEnabled)
         {
@@ -99,34 +89,25 @@ public class MUES_RoomVisualizer : MonoBehaviour
 
     private void Update()
     {
-        if (!MUES_Networking.Instance.isConnected && MUES_Networking.Instance.Runner != null && !MUES_Networking.Instance.Runner.IsSharedModeMasterClient) return;
+        var net = MUES_Networking.Instance;
+        if (!net.isConnected && net.Runner != null && !net.Runner.IsSharedModeMasterClient) return;
 
-        if (chairPlacement && previewChair != null)
+        if (!chairPlacement || previewChair == null) return;
+
+        Ray ray = new(rightController.transform.position, rightController.transform.forward);
+        bool rayHit = Physics.Raycast(ray, out RaycastHit hitInfo, 10, floorLayer);
+
+        previewChair.SetActive(rayHit);
+
+        if (GetDown(saveRoomButton)) FinalizeRoomData();
+        if (GetDown(RawButton.RIndexTrigger, Controller.RTouch) && chairCount < net.maxPlayers && rayHit && !chairAnimInProgress)
+            StartCoroutine(PlaceChair(hitInfo.point, previewChair.transform.localScale));
+
+        if (previewChair.activeSelf)
         {
-            Ray ray = new(rightController.transform.position, rightController.transform.forward);
-            bool rayHit = Physics.Raycast(ray, out RaycastHit hitInfo, 10, floorLayer);
-
-            previewChair.SetActive(rayHit);
-
-            if (GetDown(saveRoomButton)) FinalizeRoomData();
-            if (GetDown(RawButton.RIndexTrigger, Controller.RTouch) && chairCount < MUES_Networking.Instance.maxPlayers && rayHit && !chairAnimInProgress) StartCoroutine(PlaceChair(hitInfo.point, previewChair.transform.localScale));
-
-            if (previewChair.activeSelf)
-            {
-                Vector3 smoothedTargetPosition = Vector3.Lerp(previewChair.transform.position, hitInfo.point, Time.deltaTime * 15);
-                previewChair.transform.SetPositionAndRotation(smoothedTargetPosition, GetRotationTowardsNearestTable(smoothedTargetPosition));
-            }
+            Vector3 smoothedTargetPosition = Vector3.Lerp(previewChair.transform.position, hitInfo.point, Time.deltaTime * 15);
+            previewChair.transform.SetPositionAndRotation(smoothedTargetPosition, GetRotationTowardsNearestTable(smoothedTargetPosition));
         }
-    }
-
-    private void OnValidate()   // sanitize loading path
-    {
-        if (string.IsNullOrEmpty(roomDataPath)) return;
-        roomDataPath = roomDataPath.Trim('"');
-        roomDataPath = roomDataPath.Replace("\\", "/");
-
-        if (!roomDataPath.EndsWith(".bin", StringComparison.OrdinalIgnoreCase))
-            roomDataPath += ".bin";
     }
 
     #region Scene Mesh Data Serialization - Capture
@@ -148,18 +129,16 @@ public class MUES_RoomVisualizer : MonoBehaviour
         {
             ConsoleMessage.Send(debugMode, "[MUES_RoomVisualizer] No MRUKRoom found in scene! Can't capture room!", Color.red);
             MUES_Networking.Instance.LeaveRoom();
-
             yield break;
         }
 
-       room.transform.localScale = Vector3.one;
+        room.transform.localScale = Vector3.one;
 
-        Transform referenceTransform = room.transform;
-        if (MUES_Networking.Instance != null && MUES_Networking.Instance.sceneParent != null)
-        {
-            referenceTransform = MUES_Networking.Instance.sceneParent;
+        var net = MUES_Networking.Instance;
+        Transform referenceTransform = net?.sceneParent ?? room.transform;
+        
+        if (net?.sceneParent != null)
             Debug.Log($"[MUES_RoomVisualizer] Capturing room relative to SceneParent: {referenceTransform.name}");
-        }
         else
             Debug.LogWarning("[MUES_RoomVisualizer] Capturing room relative to Room transform (SceneParent not found), this may cause misalignment.");
 
@@ -172,16 +151,16 @@ public class MUES_RoomVisualizer : MonoBehaviour
             if (anchor == null || anchor.transform == null || anchor.transform.childCount == 0) continue;
 
             var anchorData = new TransformationData(
-            referenceTransform.InverseTransformPoint(anchor.transform.position),
-            Quaternion.Inverse(referenceTransform.rotation) * anchor.transform.rotation,
-            anchor.transform.localScale);
+                referenceTransform.InverseTransformPoint(anchor.transform.position),
+                Quaternion.Inverse(referenceTransform.rotation) * anchor.transform.rotation,
+                anchor.transform.localScale);
 
             var prefab = anchor.transform.GetChild(0);
 
             var prefabData = new TransformationData(
-               prefab.transform.localPosition,
-               prefab.transform.localRotation,
-               prefab.transform.localScale);
+                prefab.transform.localPosition,
+                prefab.transform.localRotation,
+                prefab.transform.localScale);
 
             var entry = new AnchorTransformData
             {
@@ -194,14 +173,12 @@ public class MUES_RoomVisualizer : MonoBehaviour
             if (anchor.name == "FLOOR" || anchor.name == "CEILING")
             {
                 var mf = prefab.GetComponent<MeshFilter>();
-                if (mf != null && mf.sharedMesh != null)
+                if (mf?.sharedMesh != null)
                 {
                     var mesh = mf.sharedMesh;
-
                     var verts = mesh.vertices;
                     var norms = mesh.normals;
                     var uvs = mesh.uv;
-
                     int vCount = verts.Length;
                     var vertexArray = new VertexData[vCount];
 
@@ -209,13 +186,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
                     bool hasUvs = uvs != null && uvs.Length == vCount;
 
                     for (int i = 0; i < vCount; i++)
-                    {
-                        Vector3 pos = verts[i];
-                        Vector3 n = hasNorms ? norms[i] : Vector3.up;
-                        Vector2 uv = hasUvs ? uvs[i] : Vector2.zero;
-
-                        vertexArray[i] = new VertexData(pos, n, uv);
-                    }
+                        vertexArray[i] = new VertexData(verts[i], hasNorms ? norms[i] : Vector3.up, hasUvs ? uvs[i] : Vector2.zero);
 
                     if (anchor.name == "FLOOR")
                     {
@@ -240,31 +211,32 @@ public class MUES_RoomVisualizer : MonoBehaviour
             floorCeilingData = _floorCeilingData
         };
 
-        currentTableTransforms = FindObjectsByType<Transform>(FindObjectsSortMode.None).Where(t => t.name == "TABLE").Select(t => t.transform).ToList();
+        currentTableTransforms = FindObjectsByType<Transform>(FindObjectsSortMode.None)
+            .Where(t => t.name == "TABLE")
+            .ToList();
 
         foreach (var table in currentTableTransforms)
         {
-            table.SetParent(MUES_Networking.Instance.sceneParent, true);
+            table.SetParent(net.sceneParent, true);
             table.GetComponent<MRUKAnchor>().enabled = false;
             table.localScale = Vector3.zero;
         }
 
         Transform floorTransform = MUES_Networking.GetRoomCenter();
 
-        if(floorTransform == null)
+        if (floorTransform == null)
         {
             Debug.LogError("[MUES_RoomVisualizer] CaptureRoomRoutine: Room center transform is null!");
-            MUES_Networking.Instance.LeaveRoom();
-
+            net.LeaveRoom();
             yield break;
         }
 
         floor = floorTransform.GetChild(0).gameObject;
         floor.transform.GetComponent<Renderer>().enabled = false;
-        floor.transform.parent.SetParent(MUES_Networking.Instance.sceneParent, true);
+        floor.transform.parent.SetParent(net.sceneParent, true);
         floor.transform.parent.GetComponent<MRUKAnchor>().enabled = false;
 
-        Rigidbody rb = floor.AddComponent<Rigidbody>();
+        var rb = floor.AddComponent<Rigidbody>();
         rb.isKinematic = true;
         rb.useGravity = false;
 
@@ -279,133 +251,11 @@ public class MUES_RoomVisualizer : MonoBehaviour
     /// </summary>
     private void FinalizeRoomData()
     {
-        List<TransformationData> chairDataList = new();
-
         foreach (var item in chairsInScene)
-        {
-            var anchored = item.GetComponent<MUES_AnchoredNetworkBehaviour>();
-            anchored.ForceUpdateAnchorOffset();
+            item.GetComponent<MUES_AnchoredNetworkBehaviour>().ForceUpdateAnchorOffset();
 
-            TransformationData data = new TransformationData(anchored.LocalAnchorOffset, anchored.LocalAnchorRotationOffset, item.transform.localScale);
-            chairDataList.Add(data);
-        }
-
-        ChairData _chairData = new ChairData { chairTransforms = chairDataList.ToArray() };
         StartCoroutine(SwitchToChairPlacement(false));
-
-        if(saveRoom)
-        {
-            string dir = Path.Combine(Application.persistentDataPath, "Rooms");
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-
-            string path = Path.Combine(dir, $"RoomData_{DateTime.UtcNow:yyyyMMdd_HHmms}.bin");
-            try
-            {
-                using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write))
-                using (var bw = new BinaryWriter(fs))
-                {
-                    bw.Write(1);
-                    bw.Write(currentRoomData.anchorTransformData.Length);
-                    foreach (var entry in currentRoomData.anchorTransformData)
-                    {
-                        bw.Write(entry.name);
-                        bw.Write(entry.type);
-
-                        WriteTransformation(bw, entry.anchorTransform);
-                        WriteTransformation(bw, entry.prefabTransform);
-                    }
-
-                    WriteVertexArray(bw, currentRoomData.floorCeilingData.floorVertices);
-                    WriteIntArray(bw, currentRoomData.floorCeilingData.floorTriangles);
-
-                    WriteVertexArray(bw, currentRoomData.floorCeilingData.ceilingVertices);
-                    WriteIntArray(bw, currentRoomData.floorCeilingData.ceilingTriangles);
-
-                    WriteChairData(bw, _chairData);
-                }
-
-                Debug.Log($"<color=lime>[MUES_CubicRoomVisualizer] Saved room to: {path}</color>");
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[MUES_CubicRoomVisualizer] Failed to save room: {ex}");
-                return;
-            }
-        }
-
         MUES_Networking.Instance.EnableJoining();
-    }
-
-    /// <summary>
-    /// Writes transformation data to a binary writer. (HOST ONLY)
-    /// </summary>
-    private void WriteTransformation(BinaryWriter bw, TransformationData t)
-    {
-        bw.Write(t.localPosition[0]); bw.Write(t.localPosition[1]); bw.Write(t.localPosition[2]);
-        bw.Write(t.localRotation[0]); bw.Write(t.localRotation[1]); bw.Write(t.localRotation[2]); bw.Write(t.localRotation[3]);
-        bw.Write(t.localScale[0]); bw.Write(t.localScale[1]); bw.Write(t.localScale[2]);
-    }
-
-    /// <summary>
-    /// Writes an integer array to a binary writer. (HOST ONLY)
-    /// </summary>
-    private void WriteIntArray(BinaryWriter bw, int[] arr)
-    {
-        if (arr == null || arr.Length == 0)
-        {
-            bw.Write(0);
-            return;
-        }
-
-        bw.Write(arr.Length);
-
-        for (int i = 0; i < arr.Length; i++)
-            bw.Write(arr[i]);
-    }
-
-    /// <summary>
-    /// Reads an integer array from a binary reader. (HOST ONLY)
-    /// </summary>
-    private int[] ReadIntArray(BinaryReader br)
-    {
-        int count = br.ReadInt32();
-        if (count <= 0) return null;
-
-        int[] arr = new int[count];
-        for (int i = 0; i < count; i++)
-            arr[i] = br.ReadInt32();
-
-        return arr;
-    }
-
-    /// <summary>
-    /// Writes chair data to a binary writer. (HOST ONLY)
-    /// </summary>
-    private void WriteVertexArray(BinaryWriter bw, VertexData[] vertices)
-    {
-        if (vertices == null || vertices.Length == 0)
-        {
-            bw.Write(0);
-            return;
-        }
-
-        bw.Write(vertices.Length);
-
-        for (int i = 0; i < vertices.Length; i++)
-        {
-            var v = vertices[i];
-
-            bw.Write(v.position[0]);
-            bw.Write(v.position[1]);
-            bw.Write(v.position[2]);
-
-            bw.Write(v.normal[0]);
-            bw.Write(v.normal[1]);
-            bw.Write(v.normal[2]);
-
-            bw.Write(v.uv[0]);
-            bw.Write(v.uv[1]);
-        }
     }
 
     /// <summary>
@@ -432,7 +282,6 @@ public class MUES_RoomVisualizer : MonoBehaviour
         else
         {
             yield return null;
-
             previewChair = Instantiate(chairPrefab);
             RenderRoomGeometry(true);
         }
@@ -445,9 +294,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
             if (table.TryGetComponent<ScalableTableComponent>(out var scalableTable))
                 Destroy(scalableTable);
 
-            DG.Tweening.Tween scaleTween = table.DOScale(enabled ? Vector3.one : Vector3.zero, .35f).SetEase(Ease.OutExpo);
-
-            seq.Join(scaleTween);
+            seq.Join(table.DOScale(enabled ? Vector3.one : Vector3.zero, .35f).SetEase(Ease.OutExpo));
         }
 
         yield return seq.WaitForCompletion();
@@ -455,12 +302,12 @@ public class MUES_RoomVisualizer : MonoBehaviour
         if (enabled) chairPlacement = true;
         else
         {
-            Destroy(previewChair);  
+            Destroy(previewChair);
             Destroy(floor.transform.parent.gameObject);
 
             foreach (var table in currentTableTransforms)
                 Destroy(table.gameObject);
-                
+
             currentTableTransforms.Clear();
         }
     }
@@ -479,7 +326,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
 
             float timeout = 1f;
             float elapsed = 0f;
-            
+
             while (spawnedObj == null && elapsed < timeout)
             {
                 elapsed += Time.deltaTime;
@@ -496,15 +343,13 @@ public class MUES_RoomVisualizer : MonoBehaviour
                 chairsInScene.Add(existingChair);
 
             spawnedObj.transform.localScale = Vector3.zero;
-            GrabFreeTransformer gft = spawnedObj.transform.GetComponent<GrabFreeTransformer>();
+            var gft = spawnedObj.transform.GetComponent<GrabFreeTransformer>();
 
-            var posConstraints = new PositionConstraints
+            gft.InjectOptionalPositionConstraints(new PositionConstraints
             {
                 ConstraintsAreRelative = false,
-
                 XAxis = ConstrainedAxis.Unconstrained,
                 ZAxis = ConstrainedAxis.Unconstrained,
-
                 YAxis = new ConstrainedAxis
                 {
                     ConstrainAxis = true,
@@ -514,12 +359,9 @@ public class MUES_RoomVisualizer : MonoBehaviour
                         Max = spawnedObj.transform.position.y
                     }
                 }
-            };
+            });
 
-            gft.InjectOptionalPositionConstraints(posConstraints);
-
-            DG.Tweening.Tween scaleTween = spawnedObj.transform.DOScale(targetScale, 0.3f).SetEase(Ease.OutExpo);
-            yield return scaleTween.WaitForCompletion();
+            yield return spawnedObj.transform.DOScale(targetScale, 0.3f).SetEase(Ease.OutExpo).WaitForCompletion();
         }
         finally
         {
@@ -560,48 +402,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
         if (dir.sqrMagnitude < 0.0001f)
             return Quaternion.identity;
 
-        dir.Normalize();
-        return Quaternion.LookRotation(dir, Vector3.up);
-    }
-
-    /// <summary> 
-    /// Writes chair data to a binary writer. (HOST ONLY)
-    /// </summary>
-    private void WriteChairData(BinaryWriter bw, ChairData chairData)
-    {
-        if (chairData == null || chairData.chairTransforms == null)
-        {
-            bw.Write(0);
-            return;
-        }
-
-        bw.Write(chairData.chairTransforms.Length);
-        foreach (var t in chairData.chairTransforms)
-            WriteTransformation(bw, t);
-    }
-
-    /// <summary>
-    /// Reads chair data from a binary reader. (HOST ONLY)
-    /// </summary>
-    private ChairData ReadChairData(BinaryReader br)
-    {
-        int count = br.ReadInt32();
-        var data = new ChairData();
-
-        if (count <= 0)
-        {
-            data.chairTransforms = Array.Empty<TransformationData>();
-            return data;
-        }
-
-        var list = new TransformationData[count];
-        for (int i = 0; i < count; i++)
-        {
-            list[i] = ReadTransformation(br);
-        }
-
-        data.chairTransforms = list;
-        return data;
+        return Quaternion.LookRotation(dir.normalized, Vector3.up);
     }
 
     #endregion
@@ -622,17 +423,12 @@ public class MUES_RoomVisualizer : MonoBehaviour
         ClearRoomVisualization();
 
         virtualRoom = new("InstantiatedRoom");
-        
-        Vector3 floorPosition = Vector3.zero;
-        Quaternion floorRotation = Quaternion.identity;
-        
+
         foreach (var data in currentRoomData.anchorTransformData)
         {
             if (data.name == "FLOOR")
             {
-                floorPosition = data.anchorTransform.ToPosition();
-                floorRotation = data.anchorTransform.ToRotation();
-                floorHeight = virtualRoom.transform.TransformPoint(floorPosition).y;
+                floorHeight = virtualRoom.transform.TransformPoint(data.anchorTransform.ToPosition()).y;
                 break;
             }
         }
@@ -645,10 +441,9 @@ public class MUES_RoomVisualizer : MonoBehaviour
             if (net.sceneParent != null)
             {
                 virtualRoom.transform.SetParent(net.sceneParent, false);
-                virtualRoom.transform.localPosition = Vector3.zero;
-                virtualRoom.transform.localRotation = Quaternion.identity;
+                virtualRoom.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
                 virtualRoom.transform.localScale = Vector3.one;
-                
+
                 if (net.isRemote)
                     ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] InstantiateRoomGeometry: Remote client - Parented virtualRoom to SceneParent.", Color.green);
             }
@@ -668,13 +463,13 @@ public class MUES_RoomVisualizer : MonoBehaviour
         {
             GameObject anchorInstance = new(data.name);
             anchorInstance.transform.SetParent(virtualRoom.transform);
-
             anchorInstance.transform.SetLocalPositionAndRotation(data.anchorTransform.ToPosition(), data.anchorTransform.ToRotation());
             anchorInstance.transform.localScale = data.anchorTransform.ToScale();
 
             GameObject prefabInstance;
 
-            if (data.type >= 0) prefabInstance = Instantiate(roomPrefabs[data.type], anchorInstance.transform);
+            if (data.type >= 0)
+                prefabInstance = Instantiate(roomPrefabs[data.type], anchorInstance.transform);
             else
             {
                 prefabInstance = new GameObject();
@@ -693,17 +488,12 @@ public class MUES_RoomVisualizer : MonoBehaviour
                 int[] tris = isFloor ? currentRoomData.floorCeilingData.floorTriangles : currentRoomData.floorCeilingData.ceilingTriangles;
 
                 MeshFilter mf = prefabInstance.AddComponent<MeshFilter>();
-                var mesh = VertexData.CreateMeshFromVertexData(vertexDataArray, tris);
-                mesh.triangles = isFloor? currentRoomData.floorCeilingData.floorTriangles: currentRoomData.floorCeilingData.ceilingTriangles;
-
-                mf.sharedMesh = mesh;
+                mf.sharedMesh = VertexData.CreateMeshFromVertexData(vertexDataArray, tris);
                 mf.sharedMesh.name = isFloor ? "FloorMesh" : "CeilingMesh";
 
-                MeshRenderer mr = prefabInstance.AddComponent<MeshRenderer>();
-                mr.material = floorCeilingMat;
-
+                prefabInstance.AddComponent<MeshRenderer>().material = floorCeilingMat;
                 prefabInstance.AddComponent<MeshCollider>();
-                
+
                 if (isFloor)
                     prefabInstance.layer = LayerMask.NameToLayer("Floor");
             }
@@ -712,20 +502,8 @@ public class MUES_RoomVisualizer : MonoBehaviour
         }
 
         Debug.Log($"<color=lime>[MUES_CubicRoomVisualizer] Instantiated {instantiatedRoomPrefabs.Count} anchors from room data.</color>");
-   
+
         InitializeVisuals();
-    }
-
-    /// <summary>
-    /// Reads transformation data from a binary reader.
-    /// </summary>
-    private TransformationData ReadTransformation(BinaryReader br)
-    {
-        Vector3 pos = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
-        Quaternion rot = new Quaternion(br.ReadSingle(), br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
-        Vector3 scale = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle());
-
-        return new TransformationData(pos, rot, scale);
     }
 
     /// <summary>
@@ -733,13 +511,14 @@ public class MUES_RoomVisualizer : MonoBehaviour
     /// </summary>
     public IEnumerator TeleportToFirstFreeChair()
     {
-        if (MUES_Networking.Instance == null || !MUES_Networking.Instance.isRemote)
+        var net = MUES_Networking.Instance;
+        if (net == null || !net.isRemote)
         {
             ConsoleMessage.Send(debugMode, "[MUES_RoomVisualizer] TeleportToFirstFreeChair skipped - not a remote client.", Color.yellow);
             yield break;
         }
 
-        yield return new WaitUntil(() => MUES_Networking.Instance.isConnected);
+        yield return new WaitUntil(() => net.isConnected);
 
         float timeout = 5f;
         float elapsed = 0f;
@@ -764,54 +543,42 @@ public class MUES_RoomVisualizer : MonoBehaviour
         }
 
         ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] Looking for free chair among {chairsInScene.Count} chairs...", Color.cyan);
-        Transform targetChair = null;
 
-        foreach (var chair in chairsInScene)
-        {
-            if (chair != null && !chair.IsOccupied)
-            {
-                targetChair = chair.transform;
-                break;
-            }
-        }
-
+        var targetChair = chairsInScene.FirstOrDefault(c => c != null && !c.IsOccupied)?.transform;
         Vector3 targetPosition;
 
-        if(targetChair != null)
+        if (targetChair != null)
         {
             ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] Teleporting to chair at position {targetChair.position}.", Color.green);
             targetPosition = targetChair.position;
-        }        
+        }
         else
         {
             ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] No free chair found, teleporting to room center and activating teleport surface.", Color.yellow);
             Transform roomCenter = MUES_Networking.GetRoomCenter();
-
             targetPosition = roomCenter.position;
             Instantiate(teleportSurface, targetPosition, Quaternion.identity, roomCenter);
         }
 
         var ovrManager = OVRManager.instance;
         var rig = ovrManager.GetComponent<OVRCameraRig>();
-        
+
         if (rig != null && Camera.main != null)
         {
             Vector3 headPos = Camera.main.transform.position;
             Vector3 rigPos = ovrManager.transform.position;
-            
-            Vector3 horizontalOffset = new Vector3(headPos.x - rigPos.x, 0f, headPos.z - rigPos.z);
-            
-            Vector3 newRigPos = new Vector3(
+            Vector3 horizontalOffset = new(headPos.x - rigPos.x, 0f, headPos.z - rigPos.z);
+
+            ovrManager.transform.position = new Vector3(
                 targetPosition.x - horizontalOffset.x,
                 targetPosition.y,
                 targetPosition.z - horizontalOffset.z
             );
-            
-            ovrManager.transform.position = newRigPos;
-            
+
             ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] Teleported with offset compensation. Head offset: {horizontalOffset}", Color.green);
         }
-        else ovrManager.transform.SetPositionAndRotation(targetPosition, ovrManager.transform.rotation);
+        else
+            ovrManager.transform.SetPositionAndRotation(targetPosition, ovrManager.transform.rotation);
     }
 
     #endregion
@@ -841,14 +608,13 @@ public class MUES_RoomVisualizer : MonoBehaviour
     /// </summary>
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
     private void RPC_ReceiveRoomDataForPlayer([RpcTarget] PlayerRef targetPlayer, string json, RpcInfo info = default) => SetRoomDataFromJson(json);
-    
+
     /// <summary>
     /// Sets the current room data from a JSON string and instantiates geometry.
     /// </summary>
     public void SetRoomDataFromJson(string json)
     {
         currentRoomData = JsonUtility.FromJson<RoomData>(json);
-
         ConsoleMessage.Send(debugMode, "[MUES_RoomVisualizer] Room data received via JSON, instantiating geometry...", Color.green);
         InstantiateRoomGeometry();
     }
@@ -872,10 +638,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
     /// </summary>
     private void InitializeVisuals()
     {
-        Transform floorTransform = null;
-        
-        if (virtualRoom != null) floorTransform = virtualRoom.transform.Find("FLOOR");       
-        if (floorTransform == null) floorTransform = GameObject.Find("FLOOR")?.transform;
+        Transform floorTransform = virtualRoom?.transform.Find("FLOOR") ?? GameObject.Find("FLOOR")?.transform;
 
         if (floorTransform != null)
         {
@@ -892,7 +655,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
             shape.radius = firstChild.GetComponent<MeshRenderer>().bounds.size.magnitude * 5;
 
             var emission = _particleSystem.emission;
-            emission.rateOverTime = firstChild.transform.localScale.magnitude; ;
+            emission.rateOverTime = firstChild.transform.localScale.magnitude;
 
             _particleSystem.Play();
         }
@@ -929,11 +692,8 @@ public class MUES_RoomVisualizer : MonoBehaviour
         {
             if (anchor == null || anchor.transform == null) continue;
 
-            DG.Tweening.Tween scaleTween = isActive
-                ? anchor.transform.DOScale(Vector3.one, 0.5f).SetEase(Ease.OutExpo)
-                : anchor.transform.DOScale(Vector3.zero, 0.5f).SetEase(Ease.InExpo);
-
-            seq.Join(scaleTween);
+            seq.Join(anchor.transform.DOScale(isActive ? Vector3.one : Vector3.zero, 0.5f)
+                .SetEase(isActive ? Ease.OutExpo : Ease.InExpo));
         }
 
         yield return seq.WaitForCompletion();
@@ -980,11 +740,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
         Camera cam = Camera.main;
         if (cam == null) return;
 
-        if (hide)
-            cam.cullingMask = LayerMask.GetMask("RenderWhileLoading");
-        else
-            cam.cullingMask = originalCullingMask | LayerMask.GetMask("Floor");
-        
+        cam.cullingMask = hide ? LayerMask.GetMask("RenderWhileLoading") : originalCullingMask | LayerMask.GetMask("Floor");
         MUES_Networking.Instance.loadingText.SetActive(hide);
     }
 
@@ -1045,11 +801,9 @@ public class TransformationData
         localScale[2] = givenLocalScale.z;
     }
 
-    public Vector3 ToPosition() => new Vector3(localPosition[0], localPosition[1], localPosition[2]);
-
-    public Quaternion ToRotation() => new Quaternion(localRotation[0], localRotation[1], localRotation[2], localRotation[3]);
-
-    public Vector3 ToScale() => new Vector3(localScale[0], localScale[1], localScale[2]);
+    public Vector3 ToPosition() => new(localPosition[0], localPosition[1], localPosition[2]);
+    public Quaternion ToRotation() => new(localRotation[0], localRotation[1], localRotation[2], localRotation[3]);
+    public Vector3 ToScale() => new(localScale[0], localScale[1], localScale[2]);
 }
 
 [Serializable]
@@ -1088,8 +842,6 @@ public class VertexData
         if (vertexData == null || vertexData.Length == 0)
             return null;
 
-        Mesh mesh = new Mesh();
-
         int vCount = vertexData.Length;
         Vector3[] verts = new Vector3[vCount];
         Vector3[] norms = new Vector3[vCount];
@@ -1098,25 +850,17 @@ public class VertexData
         for (int i = 0; i < vCount; i++)
         {
             var v = vertexData[i];
-
-            verts[i] = new Vector3(
-                v.position[0],
-                v.position[1],
-                v.position[2]);
-
-            norms[i] = new Vector3(
-                v.normal[0],
-                v.normal[1],
-                v.normal[2]);
-
-            uvs[i] = new Vector2(
-                v.uv[0],
-                v.uv[1]);
+            verts[i] = new Vector3(v.position[0], v.position[1], v.position[2]);
+            norms[i] = new Vector3(v.normal[0], v.normal[1], v.normal[2]);
+            uvs[i] = new Vector2(v.uv[0], v.uv[1]);
         }
 
-        mesh.vertices = verts;
-        mesh.normals = norms;
-        mesh.uv = uvs;
+        Mesh mesh = new()
+        {
+            vertices = verts,
+            normals = norms,
+            uv = uvs
+        };
 
         if (triangles != null && triangles.Length > 0)
             mesh.triangles = triangles;
