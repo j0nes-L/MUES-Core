@@ -495,7 +495,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
                 prefabInstance.AddComponent<MeshCollider>();
 
                 if (isFloor)
-                    prefabInstance.layer = LayerMask.NameToLayer("Floor");
+                    prefabInstance.layer = LayerMask.NameToLayer("MUES_Floor");
             }
 
             instantiatedRoomPrefabs.Add(anchorInstance.transform);
@@ -725,7 +725,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
     /// </summary>
     public void RenderRoomGeometry(bool render)
     {
-        int combinedMask = LayerMask.GetMask("RoomGeometry", "Wall");
+        int combinedMask = LayerMask.GetMask("MUES_RoomGeometry", "MUES_Wall");
         Camera cam = Camera.main;
 
         if (render) cam.cullingMask |= combinedMask;
@@ -740,7 +740,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
         Camera cam = Camera.main;
         if (cam == null) return;
 
-        cam.cullingMask = hide ? LayerMask.GetMask("RenderWhileLoading") : originalCullingMask | LayerMask.GetMask("Floor");
+        cam.cullingMask = hide ? LayerMask.GetMask("MUES_RenderWhileLoading") : originalCullingMask | LayerMask.GetMask("MUES_Floor");
     }
 
     #endregion

@@ -9,9 +9,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 6127704945397536468}
-  - component: {fileID: 2313740472436937064}
-  m_Layer: 11
-  m_Name: Table
+  m_Layer: 19
+  m_Name: FloorCeiling
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -30,24 +29,10 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
-  - {fileID: 6321875759080774906}
+  - {fileID: 6156724467570237047}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &2313740472436937064
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 609593515707577405}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: ca7e251b77a7c0847aa8d1dc33a8ba2b, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::ScalableTableComponent
-  legPrefab: {fileID: 4173387085893647380, guid: 63ffe0e85416a5d468ff55970f52a959, type: 3}
-  tableTopThickness: 0.05
---- !u!1 &3405942650462641969
+--- !u!1 &5874499962627214485
 GameObject:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -55,47 +40,46 @@ GameObject:
   m_PrefabAsset: {fileID: 0}
   serializedVersion: 6
   m_Component:
-  - component: {fileID: 6321875759080774906}
-  - component: {fileID: 3055931125174858392}
-  - component: {fileID: 4469436350967167396}
-  - component: {fileID: 183223419688864995}
-  m_Layer: 9
-  m_Name: Table_Top
+  - component: {fileID: 6156724467570237047}
+  - component: {fileID: 3626032499224958615}
+  - component: {fileID: 3226066916421259577}
+  m_Layer: 19
+  m_Name: WallPrefab
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!4 &6321875759080774906
+--- !u!4 &6156724467570237047
 Transform:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3405942650462641969}
+  m_GameObject: {fileID: 5874499962627214485}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0.5, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 0.001}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 6127704945397536468}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!33 &3055931125174858392
+--- !u!33 &3626032499224958615
 MeshFilter:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3405942650462641969}
-  m_Mesh: {fileID: 4185675743113982831, guid: dfe8128822632b247a23157bc0bf0aa5, type: 3}
---- !u!23 &4469436350967167396
+  m_GameObject: {fileID: 5874499962627214485}
+  m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!23 &3226066916421259577
 MeshRenderer:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3405942650462641969}
+  m_GameObject: {fileID: 5874499962627214485}
   m_Enabled: 1
   m_CastShadows: 1
   m_ReceiveShadows: 1
@@ -114,7 +98,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: fb3ec5f137c3cb8449581cac8a953da9, type: 2}
+  - {fileID: 2100000, guid: 64045ea66e901dd418889a5eac48c340, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -138,24 +122,3 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!65 &183223419688864995
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 3405942650462641969}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 0.029999997, z: 1}
-  m_Center: {x: 0, y: -0.014999986, z: 0}

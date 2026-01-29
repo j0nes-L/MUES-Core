@@ -8,6 +8,7 @@ namespace MUES.Editor
     [InitializeOnLoad]
     public static class MUES_LayerSetup
     {
+        // Definierte Layer mit ihren gewünschten Slot-Positionen
         private static readonly Dictionary<string, int> DesiredLayerSlots = new Dictionary<string, int>
         {
             { "MUES_RenderWhileLoading", 18 },
@@ -20,7 +21,9 @@ namespace MUES.Editor
         static MUES_LayerSetup()
         {
             foreach (var layerEntry in DesiredLayerSlots)
+            {
                 EnsureLayerAtSlot(layerEntry.Key, layerEntry.Value);
+            }
         }
 
         private static void EnsureLayerAtSlot(string layerName, int desiredSlot)
@@ -35,10 +38,7 @@ namespace MUES.Editor
             var tagManager = new SerializedObject(assets[0]);
             var layersProp = tagManager.FindProperty("layers");
 
-            var desiredSlotProp = layersProp.GetArrayElementAtIndex(desiredSlot);
-            if (desiredSlotProp != null && desiredSlotProp.stringValue == layerName)
-                return;
-
+            // Prüfen ob der Layer bereits existiert
             int existingIndex = -1;
             for (int i = 0; i < layersProp.arraySize; i++)
             {
@@ -50,27 +50,39 @@ namespace MUES.Editor
                 }
             }
 
-            if (existingIndex >= 0 && existingIndex != desiredSlot)
+            // Layer existiert bereits am gewünschten Slot
+            if (existingIndex == desiredSlot)
+                return;
+
+            // Layer existiert an einem anderen Slot - entfernen
+            if (existingIndex >= 0)
             {
                 var existingSp = layersProp.GetArrayElementAtIndex(existingIndex);
                 existingSp.stringValue = "";
                 tagManager.ApplyModifiedProperties();
             }
 
+            // Prüfen ob der gewünschte Slot verfügbar ist
+            var desiredSlotProp = layersProp.GetArrayElementAtIndex(desiredSlot);
             string existingLayerAtSlot = desiredSlotProp?.stringValue;
 
-            if (!string.IsNullOrEmpty(existingLayerAtSlot))
+            if (!string.IsNullOrEmpty(existingLayerAtSlot) && existingLayerAtSlot != layerName)
             {
-                int newSlot = FindFreeSlot(layersProp);
+                // Der Slot ist belegt - verschiebe den vorhandenen Layer
+                int newSlot = FindFreeSlot(layersProp, desiredSlot);
                 if (newSlot >= 0)
                 {
-                    int oldLayerIndex = desiredSlot;
+                    // Objekte mit dem alten Layer aktualisieren
+                    int oldLayerMask = desiredSlot;
+                    int newLayerMask = newSlot;
                     
+                    // Verschiebe den existierenden Layer auf den neuen Slot
                     var newSlotProp = layersProp.GetArrayElementAtIndex(newSlot);
                     newSlotProp.stringValue = existingLayerAtSlot;
                     tagManager.ApplyModifiedProperties();
-
-                    UpdateObjectsWithLayer(oldLayerIndex, newSlot);
+                    
+                    // Aktualisiere alle Objekte die den alten Layer verwenden
+                    UpdateObjectsWithLayer(oldLayerMask, newLayerMask);
                     
                     Debug.Log($"[MUES_LayerSetup] Layer '{existingLayerAtSlot}' moved from slot {desiredSlot} to slot {newSlot}.");
                 }
@@ -81,16 +93,22 @@ namespace MUES.Editor
                 }
             }
 
+            // Setze den MUES Layer auf den gewünschten Slot
             desiredSlotProp.stringValue = layerName;
             tagManager.ApplyModifiedProperties();
             AssetDatabase.SaveAssets();
             Debug.Log($"[MUES_LayerSetup] Layer '{layerName}' set at slot {desiredSlot}.");
         }
 
-        private static int FindFreeSlot(SerializedProperty layersProp)
+        private static int FindFreeSlot(SerializedProperty layersProp, int excludeSlot)
         {
+            // Suche nach einem freien Slot ab Layer 8 (User Layers)
             for (int i = 8; i < layersProp.arraySize; i++)
             {
+                if (i == excludeSlot)
+                    continue;
+                    
+                // Überspringe Slots die für MUES reserviert sind
                 bool isReserved = false;
                 foreach (var entry in DesiredLayerSlots)
                 {
@@ -105,14 +123,16 @@ namespace MUES.Editor
 
                 var sp = layersProp.GetArrayElementAtIndex(i);
                 if (sp != null && string.IsNullOrEmpty(sp.stringValue))
+                {
                     return i;
+                }
             }
-
             return -1;
         }
 
         private static void UpdateObjectsWithLayer(int oldLayer, int newLayer)
         {
+            // Finde alle GameObjects in der Szene und in Prefabs
             GameObject[] allObjects = Resources.FindObjectsOfTypeAll<GameObject>();
             int updatedCount = 0;
 
@@ -120,26 +140,22 @@ namespace MUES.Editor
             {
                 if (obj.layer == oldLayer)
                 {
+                    // Prüfen ob es ein Prefab ist
                     if (PrefabUtility.IsPartOfPrefabAsset(obj))
                     {
                         string prefabPath = AssetDatabase.GetAssetPath(obj);
                         if (!string.IsNullOrEmpty(prefabPath))
                         {
-                            GameObject prefabRoot = PrefabUtility.LoadPrefabContents(prefabPath);
-                            if (prefabRoot != null)
+                            // Prefab bearbeiten
+                            using (var editingScope = new PrefabUtility.EditPrefabContentsScope(prefabPath))
                             {
-                                bool changed = UpdateLayerRecursive(prefabRoot, oldLayer, newLayer);
-                                if (changed)
-                                {
-                                    PrefabUtility.SaveAsPrefabAsset(prefabRoot, prefabPath);
-                                    updatedCount++;
-                                }
-                                PrefabUtility.UnloadPrefabContents(prefabRoot);
+                                UpdateLayerRecursive(editingScope.prefabContentsRoot, oldLayer, newLayer);
                             }
                         }
                     }
                     else if (!EditorUtility.IsPersistent(obj))
                     {
+                        // Szenen-Objekt
                         Undo.RecordObject(obj, "Update Layer");
                         obj.layer = newLayer;
                         EditorUtility.SetDirty(obj);
@@ -149,26 +165,22 @@ namespace MUES.Editor
             }
 
             if (updatedCount > 0)
+            {
                 Debug.Log($"[MUES_LayerSetup] Updated {updatedCount} objects from layer {oldLayer} to layer {newLayer}.");
+            }
         }
 
-        private static bool UpdateLayerRecursive(GameObject root, int oldLayer, int newLayer)
+        private static void UpdateLayerRecursive(GameObject root, int oldLayer, int newLayer)
         {
-            bool changed = false;
-            
             if (root.layer == oldLayer)
             {
                 root.layer = newLayer;
-                changed = true;
             }
 
             foreach (Transform child in root.transform)
             {
-                if (UpdateLayerRecursive(child.gameObject, oldLayer, newLayer))
-                    changed = true;
+                UpdateLayerRecursive(child.gameObject, oldLayer, newLayer);
             }
-            
-            return changed;
         }
     }
 }

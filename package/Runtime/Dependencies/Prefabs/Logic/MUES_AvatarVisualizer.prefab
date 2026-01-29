@@ -599,7 +599,7 @@ GameObject:
   - component: {fileID: 619280321298358554}
   - component: {fileID: 3923381187448499927}
   - component: {fileID: 8657039547546090383}
-  m_Layer: 8
+  m_Layer: 22
   m_Name: Mesh
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -737,7 +737,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 7885655082867625803}
-  m_Layer: 10
+  m_Layer: 0
   m_Name: Marker_AFK
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -904,7 +904,7 @@ GameObject:
   - component: {fileID: 2668468079534306850}
   - component: {fileID: 737180434165652861}
   - component: {fileID: 2183202646788506544}
-  m_Layer: 8
+  m_Layer: 22
   m_Name: Mesh
   m_TagString: Untagged
   m_Icon: {fileID: 0}
@@ -1172,7 +1172,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 672646c859c91c249b979bdf86b36516, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::CameraMarkerFollower
-  useAnchorSmoothing: 0
   initialized: 0
   destroyOwnMarker: 1
   debugMode: 1

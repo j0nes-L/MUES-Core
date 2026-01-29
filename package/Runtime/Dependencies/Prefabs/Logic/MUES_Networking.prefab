@@ -49,7 +49,11 @@ MonoBehaviour:
   roomMiddleAnchor: {fileID: 5614817491323615421, guid: 27e0f81f436e08449a9d7196b2c0d959, type: 3}
   sessionMetaPrefab: {fileID: 1453236673532820634, guid: 505f0055962b72b449c2de769ec6c634, type: 3}
   playerMarkerPrefab: {fileID: 1942343534745959403, guid: 5893962b6db696a4fa38eed48a8724af, type: 3}
-  maxPlayers: 4
+  maxPlayers: 5
+  qrDisplayDomain: 
+  qrSetDomain: 
+  qrSendToken: 
+  modelDownloadDomain: 
   debugMode: 1
   popUpQRCode: 0
   showAvatarsForColocated: 0
@@ -57,7 +61,6 @@ MonoBehaviour:
   spatialAnchorCore: {fileID: 0}
   anchorTransform: {fileID: 0}
   sceneParent: {fileID: 0}
-  loadingText: {fileID: 0}
   isRemote: 0
   isConnected: 0
   isJoiningAsClient: 0
@@ -101,7 +104,7 @@ GameObject:
   - component: {fileID: 7281747766121827321}
   - component: {fileID: 5195536394527412361}
   - component: {fileID: 6292885237954734232}
-  m_Layer: 3
+  m_Layer: 18
   m_Name: RoomDepthIndex
   m_TagString: Untagged
   m_Icon: {fileID: 0}

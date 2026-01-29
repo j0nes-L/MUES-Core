@@ -9,8 +9,8 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 6127704945397536468}
-  m_Layer: 9
-  m_Name: FloorCeiling
+  m_Layer: 19
+  m_Name: Screens
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -43,8 +43,8 @@ GameObject:
   - component: {fileID: 6156724467570237047}
   - component: {fileID: 3626032499224958615}
   - component: {fileID: 3226066916421259577}
-  m_Layer: 9
-  m_Name: WallPrefab
+  m_Layer: 19
+  m_Name: SCREEN
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -98,7 +98,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 64045ea66e901dd418889a5eac48c340, type: 2}
+  - {fileID: 2100000, guid: 52bb59cc54bf5e9468e7aa2f3cd6f04d, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0

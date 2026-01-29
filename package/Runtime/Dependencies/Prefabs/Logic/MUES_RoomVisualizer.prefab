@@ -131,7 +131,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HSXR_CubicSceneVisualizer
   saveRoomButton: 1
-  roomDataPath: 
   roomParticlesPrefab: {fileID: 5554645374193231830, guid: 773e88eca74b6064b842a0ae58531c87, type: 3}
   teleportSurface: {fileID: 1738182575848948225, guid: 9c4cef11ea8b3d34090f48382d41e81c, type: 3}
   floorCeilingMat: {fileID: 2100000, guid: 25822e1e7fa943e458106f1ca823e1e9, type: 2}
@@ -139,9 +138,8 @@ MonoBehaviour:
   networkedChairPrefab: {fileID: 2190722491984919135, guid: 9dd30ca30ab98ba4b8863de9904eb78a, type: 3}
   floorLayer:
     serializedVersion: 2
-    m_Bits: 64
+    m_Bits: 1048576
   debugMode: 0
-  saveRoom: 0
   chairsInScene: []
   virtualRoom: {fileID: 0}
   chairCount: 0
