@@ -63,6 +63,39 @@ public class MUES_RoomVisualizer : MonoBehaviour
     public static float floorHeight = 0f; // Static variable to hold the floor height.
     public static MUES_RoomVisualizer Instance { get; private set; }
 
+    #region Events
+
+    /// <summary>
+    /// Fired when the loading screen is shown (culling mask updated to hide scene).
+    /// </summary>
+    public event Action OnLoadingStarted;
+
+    /// <summary>
+    /// Fired when the loading screen is hidden (culling mask restored).
+    /// </summary>
+    public event Action OnLoadingEnded;
+
+    /// <summary>
+    /// Fired when chair placement mode is enabled.
+    /// </summary>
+    public event Action OnChairPlacementStarted;
+
+    /// <summary>
+    /// Fired when chair placement mode is disabled (room finalized).
+    /// </summary>
+    public event Action OnChairPlacementEnded;
+
+    /// <summary>
+    /// Fired when a chair is placed. Provides the chair transform.
+    /// </summary>
+    public event Action<Transform> OnChairPlaced;
+
+    /// <summary>
+    /// Fired when room geometry rendering is toggled. Provides the render state.
+    /// </summary>
+    public event Action<bool> OnRoomGeometryRenderChanged;
+
+    #endregion
     private void Awake()
     {
         if (Instance == null) Instance = this;
@@ -108,7 +141,7 @@ public class MUES_RoomVisualizer : MonoBehaviour
             Vector3 smoothedTargetPosition = Vector3.Lerp(previewChair.transform.position, hitInfo.point, Time.deltaTime * 15);
             previewChair.transform.SetPositionAndRotation(smoothedTargetPosition, GetRotationTowardsNearestTable(smoothedTargetPosition));
         }
-    }
+    } 
 
     #region Scene Mesh Data Serialization - Capture
 
@@ -278,12 +311,17 @@ public class MUES_RoomVisualizer : MonoBehaviour
     /// </summary>
     private IEnumerator SwitchToChairPlacement(bool enabled)
     {
-        if (!enabled) chairPlacement = false;
+        if (!enabled) 
+        {
+            chairPlacement = false;
+            OnChairPlacementEnded?.Invoke();
+        }
         else
         {
             yield return null;
             previewChair = Instantiate(chairPrefab);
             RenderRoomGeometry(true);
+            OnChairPlacementStarted?.Invoke();
         }
 
         Sequence seq = DOTween.Sequence();
@@ -362,6 +400,8 @@ public class MUES_RoomVisualizer : MonoBehaviour
             });
 
             yield return spawnedObj.transform.DOScale(targetScale, 0.3f).SetEase(Ease.OutExpo).WaitForCompletion();
+
+            OnChairPlaced?.Invoke(spawnedObj.transform);
         }
         finally
         {
@@ -730,6 +770,8 @@ public class MUES_RoomVisualizer : MonoBehaviour
 
         if (render) cam.cullingMask |= combinedMask;
         else cam.cullingMask &= ~combinedMask;
+
+        OnRoomGeometryRenderChanged?.Invoke(render);
     }
 
     /// <summary>
@@ -741,6 +783,11 @@ public class MUES_RoomVisualizer : MonoBehaviour
         if (cam == null) return;
 
         cam.cullingMask = hide ? LayerMask.GetMask("MUES_RenderWhileLoading") : originalCullingMask | LayerMask.GetMask("MUES_Floor");
+
+        if (hide)
+            OnLoadingStarted?.Invoke();
+        else
+            OnLoadingEnded?.Invoke();
     }
 
     #endregion

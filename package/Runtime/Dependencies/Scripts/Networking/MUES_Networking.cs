@@ -63,15 +63,15 @@ public class MUES_Networking : MonoBehaviour
     private EnvironmentRaycastManager raycastManager; // Reference to the environment raycast manager.
     private SpriteRenderer depthIndex;  // Depth index sprite renderer.
 
-    private Camera _mainCam;
-    private Camera mainCam => _mainCam != null ? _mainCam : (_mainCam = Camera.main);
+    private Camera mainCam => Camera.main;  // Main camera reference.
 
     private string currentRoomToken;   // The token for the current room.
     private bool isCreatingRoom, isInitalizingRoomCreation; // Room creation state flags.
+    private bool qrCodeScanning;    // Flag indicating if QR code scanning is active.
     private EstimatedRoomCreationQuality estimatedRoomQuality = EstimatedRoomCreationQuality.Poor; // Estimated quality of the room creation.
 
-    private float maxDistanceThreshold = 0.5f;  // Maximum distance in meters to consider the anchor valid.
-    private float glitchTimeThreshold = 0.5f;   // Time in seconds to consider a glitch valid.
+    private const float maxDistanceThreshold = 0.5f;  // Maximum distance in meters to consider the anchor valid.
+    private const float glitchTimeThreshold = 0.5f;   // Time in seconds to consider a glitch valid.
     private float _glitchTimer;    // Timer for tracking how long the anchor has been out of bounds.
     private Vector3 _lastValidAnchorPos;    // Last valid position of the anchor.
     private Quaternion _lastValidAnchorRot; // Last valid rotation of the anchor.
@@ -79,7 +79,6 @@ public class MUES_Networking : MonoBehaviour
 
     private const float sceneParentPositionSmoothing = 0.5f; // Smoothing factor for scene parent position.
     private const float sceneParentRotationSmoothing = 2f;   // Smoothing factor for scene parent rotation.
-
     public static MUES_Networking Instance { get; private set; }
 
     public enum EstimatedRoomCreationQuality
@@ -104,6 +103,85 @@ public class MUES_Networking : MonoBehaviour
             return null;
         }
     }
+
+    #region Events
+
+    /// <summary>
+    /// Fired when lobby creation starts.
+    /// </summary>
+    public event Action OnLobbyCreationStarted;
+
+    /// <summary>
+    /// Fired when a room is successfully created. Provides the room token.
+    /// </summary>
+    public event Action<string> OnRoomCreatedSuccessfully;
+
+    /// <summary>
+    /// Fired when room creation fails. Provides error message.
+    /// </summary>
+    public event Action<string> OnRoomCreationFailed;
+
+    /// <summary>
+    /// Fired when room mesh loading fails (no scanned room data found).
+    /// </summary>
+    public event Action OnRoomMeshLoadFailed;
+
+    /// <summary>
+    /// Fired when joining is enabled for other players.
+    /// </summary>
+    public event Action OnJoiningEnabled;
+
+    /// <summary>
+    /// Fired when the local player joins a room as host.
+    /// </summary>
+    public event Action<PlayerRef> OnHostJoined;
+
+    /// <summary>
+    /// Fired when the local player joins a room as colocated client.
+    /// </summary>
+    public event Action<PlayerRef> OnColocatedClientJoined;
+
+    /// <summary>
+    /// Fired when the local player joins a room as remote client.
+    /// </summary>
+    public event Action<PlayerRef> OnRemoteClientJoined;
+
+    /// <summary>
+    /// Fired when a remote player joins. Provides PlayerRef.
+    /// </summary>
+    public event Action<PlayerRef> OnPlayerJoined;
+
+    /// <summary>
+    /// Fired when a player leaves. Provides PlayerRef.
+    /// </summary>
+    public event Action<PlayerRef> OnPlayerLeft;
+
+    /// <summary>
+    /// Fired when the local player leaves the room.
+    /// </summary>
+    public event Action OnRoomLeft;
+
+    /// <summary>
+    /// Fired when connection state changes. Provides isConnected.
+    /// </summary>
+    public event Action<bool> OnConnectionStateChanged;
+
+    /// <summary>
+    /// Fired when remote status changes. Provides isRemote.
+    /// </summary>
+    public event Action<bool> OnRemoteStatusChanged;
+
+    /// <summary>
+    /// Fired when this client becomes the new master client.
+    /// </summary>
+    public event Action OnBecameMasterClient;
+
+    /// <summary>
+    /// Fired when QR code scanning state changes. Provides the new scanning state.
+    /// </summary>
+    public event Action<bool> OnQRCodeScanningStateChanged;
+
+    #endregion
 
     private void Awake()
     {
@@ -177,6 +255,7 @@ public class MUES_Networking : MonoBehaviour
         }
 
         isCreatingRoom = isInitalizingRoomCreation = true;
+        OnLobbyCreationStarted?.Invoke();
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(true);
         MUES_RoomVisualizer.Instance.RenderRoomGeometry(false);
     }
@@ -238,6 +317,8 @@ public class MUES_Networking : MonoBehaviour
         if (loadResult != MRUK.LoadDeviceResult.Success)
         {
             AbortLobbyCreation();
+            OnRoomMeshLoadFailed?.Invoke();
+            OnRoomCreationFailed?.Invoke("Room scene loading failed or timed out. - Do you have a scanned room on your headset?");
             ConsoleMessage.Send(debugMode, "Room scene loading failed or timed out. - Do you have a scanned room on your headset?", Color.red);
             return;
         }
@@ -421,6 +502,8 @@ public class MUES_Networking : MonoBehaviour
         ConsoleMessage.Send(debugMode, $"Room created successfully with token: {result.RoomToken}.", Color.green);
         currentRoomToken = result.RoomToken;
         isCreatingRoom = false;
+
+        OnRoomCreatedSuccessfully?.Invoke(result.RoomToken);
     }
 
     /// <summary>
@@ -438,6 +521,9 @@ public class MUES_Networking : MonoBehaviour
 
         MUES_SessionMeta.Instance.JoinEnabled = true;
         isConnected = true;
+
+        OnJoiningEnabled?.Invoke();
+        OnConnectionStateChanged?.Invoke(true);
 
         StartCoroutine(SendQrString($"MUESJoin_{currentRoomToken}"));
     }
@@ -477,6 +563,7 @@ public class MUES_Networking : MonoBehaviour
     public void HandleHostJoin(PlayerRef player)
     {
         isRemote = false;
+        OnRemoteStatusChanged?.Invoke(false);
 
         SetSessionMeta();
         ConfigureCamera();
@@ -484,6 +571,8 @@ public class MUES_Networking : MonoBehaviour
 
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
         MUES_RoomVisualizer.Instance.CaptureRoom();
+
+        OnHostJoined?.Invoke(player);
     }
 
     /// <summary>
@@ -526,12 +615,37 @@ public class MUES_Networking : MonoBehaviour
     #region Joining - Non-Host-Clients
 
     /// <summary>
+    /// Enables QR code scanning for the current client.
+    /// </summary>
+    public void EnableQRCodeScanning()
+    {
+        if (qrCodeScanning) return;
+
+        qrCodeScanning = true;
+        OnQRCodeScanningStateChanged?.Invoke(true);
+    }
+
+    /// <summary>
+    /// Disables QR code scanning for the current client.
+    /// </summary>
+    public void DisableQRCodeScanning()
+    {
+        if (!qrCodeScanning) return;
+
+        qrCodeScanning = false;
+        OnQRCodeScanningStateChanged?.Invoke(false);
+    }
+
+    /// <summary>
     /// Gets executed when a trackable is added to the MRUK.
     /// </summary>
     private void OnTrackableAdded(MRUKTrackable trackable)
     {
-        ConsoleMessage.Send(debugMode, "Trackable added.", Color.green);
-        ScanQRCode(trackable);
+        if (qrCodeScanning)
+        {
+            ConsoleMessage.Send(debugMode, "Trackable added.", Color.green);
+            ScanQRCode(trackable);
+        }      
     }
 
     /// <summary>
@@ -573,7 +687,10 @@ public class MUES_Networking : MonoBehaviour
         if (!result.IsSuccess)
             Debug.LogError($"Room join failed: {result.ErrorMessage}");
         else
+        {
+            DisableQRCodeScanning();
             ConsoleMessage.Send(debugMode, "Joined room via QR code.", Color.green);
+        }          
     }
 
     /// <summary>
@@ -624,6 +741,7 @@ public class MUES_Networking : MonoBehaviour
             yield break;
 
         ConfigureRemoteStatus(meta);
+        OnRemoteStatusChanged?.Invoke(isRemote);
 
         if (!isRemote)
         {
@@ -677,10 +795,14 @@ public class MUES_Networking : MonoBehaviour
 
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
         isConnected = true;
+        OnConnectionStateChanged?.Invoke(true);
+
+        if (isRemote) OnRemoteClientJoined?.Invoke(player);
+        else OnColocatedClientJoined?.Invoke(player);
 
         // --- OBJECT INSTANTIATION TESTING - CLIENT ---
-        var (spawnPos, spawnRot) = GetSpawnPoseInFrontOfCamera(0.75f);
-        MUES_NetworkedObjectManager.Instance.Instantiate(MUES_NetworkedObjectManager.Instance.testModelPrefab, spawnPos, spawnRot, out _);
+        //var (spawnPos, spawnRot) = GetSpawnPoseInFrontOfCamera(0.75f);
+        //MUES_NetworkedObjectManager.Instance.Instantiate(MUES_NetworkedObjectManager.Instance.testModelPrefab, spawnPos, spawnRot, out _);
         // ---
     }
 
@@ -832,6 +954,19 @@ public class MUES_Networking : MonoBehaviour
     #endregion
 
     #region Utility Methods
+
+    /// <summary>
+    /// Captures the room if needed by requesting a scene capture from the OVRSceneManager.
+    /// </summary>
+    public async void LaunchSpaceSetup()
+    {
+        var result = await _mruk.LoadSceneFromDevice(requestSceneCaptureIfNoDataFound: true);
+
+        if (result != MRUK.LoadDeviceResult.Success)
+            ConsoleMessage.Send(debugMode, $"Space Setup failed: {result}", Color.red);
+        else
+            ConsoleMessage.Send(debugMode, "Space Setup completed successfully. - Try restarting the lobby creation process.", Color.green);
+    }
 
     /// <summary>
     /// Gets a spawn position and rotation in front of the main camera.
@@ -1093,6 +1228,7 @@ public class MUES_Networking : MonoBehaviour
         if (becameNewMaster)
         {
             ConsoleMessage.Send(debugMode, "Became new SharedModeMasterClient - taking over session objects...", Color.cyan);
+            OnBecameMasterClient?.Invoke();
 
             if (ShouldCloseRoom(Runner))
             {
@@ -1117,6 +1253,8 @@ public class MUES_Networking : MonoBehaviour
                 }
             }
         }
+
+        OnPlayerLeft?.Invoke(player);
 
         if (Runner.IsSharedModeMasterClient)
             _previousMasterClient = Runner.LocalPlayer;
@@ -1290,6 +1428,9 @@ public class MUES_Networking : MonoBehaviour
             _runnerPrefab.gameObject.SetActive(true);
             ConsoleMessage.Send(debugMode, "Re-enabled NetworkRunner prefab for future connections.", Color.cyan);
         }
+
+        OnRoomLeft?.Invoke();
+        OnConnectionStateChanged?.Invoke(false);
 
         ConsoleMessage.Send(debugMode, "Left room.", Color.yellow);
     }
