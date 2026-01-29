@@ -324,51 +324,6 @@ MonoBehaviour:
   AutoConnectAndJoin: 1
   UseFusionAppSettings: 1
   UseFusionAuthValues: 1
---- !u!1 &4048923693486063131
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 904194114127555482}
-  - component: {fileID: 2975364431498013691}
-  m_Layer: 0
-  m_Name: Voice Logger
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!4 &904194114127555482
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4048923693486063131}
-  serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 5171158537095396069}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
---- !u!114 &2975364431498013691
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 4048923693486063131}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a86f533fd9917dd4da8601e9eb542c96, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: PhotonVoice::Photon.Voice.Unity.VoiceLogger
-  LogLevel: 2
 --- !u!1 &8942297632343224161
 GameObject:
   m_ObjectHideFlags: 0
@@ -401,7 +356,6 @@ Transform:
   - {fileID: 2702897438672028449}
   - {fileID: 4736593261193815629}
   - {fileID: 6618886880052960837}
-  - {fileID: 904194114127555482}
   - {fileID: 7281747766121827321}
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
