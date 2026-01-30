@@ -118,7 +118,7 @@ public class MUES_Networking : MonoBehaviour
     /// <summary>
     /// Fired when room creation fails. Provides error message.
     /// </summary>
-    public event Action<string> OnRoomCreationFailed;
+    public event Action OnRoomCreationFailed;
 
     /// <summary>
     /// Fired when room mesh loading fails (no scanned room data found).
@@ -255,11 +255,12 @@ public class MUES_Networking : MonoBehaviour
         if (IsConnectedToRoom())
         {
             ConsoleMessage.Send(debugMode, "Already connected to a session, cannot create another.", Color.yellow);
+
+            OnRoomCreationFailed?.Invoke(); 
             return;
         }
 
         isCreatingRoom = isInitalizingRoomCreation = true;
-        OnLobbyCreationStarted?.Invoke();
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(true);
         MUES_RoomVisualizer.Instance.RenderRoomGeometry(false);
     }
@@ -316,13 +317,15 @@ public class MUES_Networking : MonoBehaviour
     /// </summary>
     public async void InitSharedRoom()
     {
+        OnLobbyCreationStarted?.Invoke();
         var loadResult = await LoadSceneWithTimeout(_mruk, 5f);
 
         if (loadResult != MRUK.LoadDeviceResult.Success)
         {
             AbortLobbyCreation();
             OnRoomMeshLoadFailed?.Invoke();
-            OnRoomCreationFailed?.Invoke("Room scene loading failed or timed out. - Do you have a scanned room on your headset?");
+            OnRoomCreationFailed?.Invoke();
+
             ConsoleMessage.Send(debugMode, "Room scene loading failed or timed out. - Do you have a scanned room on your headset?", Color.red);
             return;
         }
@@ -370,6 +373,8 @@ public class MUES_Networking : MonoBehaviour
         if (opResult != OVRSpatialAnchor.OperationResult.Success)
         {
             ConsoleMessage.Send(debugMode, $"Anchor spawning failed: {opResult}", Color.red);
+
+            AbortLobbyCreation();
             return;
         }
 
@@ -426,6 +431,8 @@ public class MUES_Networking : MonoBehaviour
         if (anchorTransform == null)
         {
             ConsoleMessage.Send(debugMode, "InitSceneParent: anchorTransform=NULL", Color.cyan);
+
+            AbortLobbyCreation();
             return;
         }
 
@@ -452,6 +459,8 @@ public class MUES_Networking : MonoBehaviour
         _mruk.ClearScene();
         spatialAnchorCore.EraseAllAnchors();
         MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
+
+        OnRoomCreationFailed?.Invoke();
         isCreatingRoom = false;
     }
 
