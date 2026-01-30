@@ -76,7 +76,6 @@ public class MUES_Networking : MonoBehaviour
     private Vector3 _lastValidAnchorPos;    // Last valid position of the anchor.
     private Quaternion _lastValidAnchorRot; // Last valid rotation of the anchor.
     private bool _isFirstFrame = true;  // Flag to check if it's the first frame of update.
-
     private const float sceneParentPositionSmoothing = 0.5f; // Smoothing factor for scene parent position.
     private const float sceneParentRotationSmoothing = 2f;   // Smoothing factor for scene parent rotation.
     public static MUES_Networking Instance { get; private set; }
@@ -130,6 +129,11 @@ public class MUES_Networking : MonoBehaviour
     /// Fired when joining is enabled for other players.
     /// </summary>
     public event Action OnJoiningEnabled;
+
+    /// <summary>
+    /// Fired when room joining fails.
+    /// </summary>
+    public event Action OnRoomJoiningFailed;
 
     /// <summary>
     /// Fired when the local player joins a room as host.
@@ -685,7 +689,10 @@ public class MUES_Networking : MonoBehaviour
         var result = await JoinRoomByToken(roomToken);
 
         if (!result.IsSuccess)
+        {
             Debug.LogError($"Room join failed: {result.ErrorMessage}");
+            OnRoomJoiningFailed?.Invoke();
+        }        
         else
         {
             DisableQRCodeScanning();
