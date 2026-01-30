@@ -1,6 +1,7 @@
 using UnityEngine;
 using System.Diagnostics;
 using System.Reflection;
+using System;
 
 public static class ConsoleMessage
 {
