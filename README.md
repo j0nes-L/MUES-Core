@@ -1,3 +1,5 @@
 Install via git url with: https://github.com/j0nes-L/MUES-Core.git?path=/package
 
-If you want your avatar to be visible during loading, assign it the "MUES_RenderWhileLoading" Layer!
+If you want your avatar or other objects to be visible during loading, assign it the "MUES_RenderWhileLoading" Layer!
+
+Still a Work in Progress! :)
