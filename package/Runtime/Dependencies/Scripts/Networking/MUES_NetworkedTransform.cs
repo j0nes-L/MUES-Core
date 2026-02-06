@@ -46,6 +46,8 @@ namespace MUES.Core
         private float movementThreshold = 0.001f;   // Threshold for position change detection
         private float rotationThreshold = 0.1f; // Threshold for rotation change detection
 
+        private Vector3 _cachedScale = Vector3.one; // Cached original scale for visibility control
+
         /// <summary>
         /// Gets the reference transform for movement detection.
         /// </summary>
@@ -107,12 +109,12 @@ namespace MUES.Core
 
         public override void Spawned()
         {
+            _cachedScale = transform.localScale;
+            transform.localScale = Vector3.zero;
+
             _isGrabbableOnSpawn = IsGrabbable;
             _lastKnownSpawnerPlayerId = SpawnerPlayerId;
             _lastKnownSpawnerControlsTransform = SpawnerControlsTransform;
-
-            if (!string.IsNullOrEmpty(ModelFileName.ToString()))
-                SetVisibility(false);
 
             if (Object.HasStateAuthority && SpawnerPlayerId == -1)
             {
@@ -127,18 +129,6 @@ namespace MUES.Core
 
             DisableExistingGrabbableComponents();
             StartCoroutine(InitRoutine());
-        }
-
-        /// <summary>
-        /// Sets the visibility of all renderers on this object and its children.
-        /// </summary>
-        private void SetVisibility(bool visible)
-        {
-            var renderers = GetComponentsInChildren<Renderer>(true);
-            foreach (var renderer in renderers)
-                renderer.enabled = visible;
-
-            ConsoleMessage.Send(true, $"Networked Transform - Visibility set to {visible} ({renderers.Length} renderers)", visible ? Color.green : Color.yellow);
         }
 
         /// <summary>
@@ -231,7 +221,9 @@ namespace MUES.Core
             CacheCurrentPosition();
             initialized = true;
 
-            ConsoleMessage.Send(true, $"Networked Transform - Init complete. Final Pos={transform.position}, Rot={transform.rotation.eulerAngles}", Color.green);
+            transform.localScale = _cachedScale;
+
+            ConsoleMessage.Send(true, $"Networked Transform - Init complete. Final Pos={transform.position}, Rot={transform.rotation.eulerAngles}, Scale restored to {_cachedScale}", Color.green);
         }
 
         /// <summary>
@@ -353,17 +345,16 @@ namespace MUES.Core
             if (Object == null || !Object.IsValid) yield break;
 
             string modelName = ModelFileName.ToString();
+
             if (string.IsNullOrEmpty(modelName))
             {
                 ConsoleMessage.Send(true, "Networked Transform - No model filename set - using static prefab.", Color.cyan);
-                SetVisibility(true);
                 yield break;
             }
 
             if (modelLoaded || transform.childCount > 0)
             {
                 ConsoleMessage.Send(true, "Networked Transform - Model already loaded.", Color.yellow);
-                SetVisibility(true);
                 yield break;
             }
 
@@ -415,8 +406,8 @@ namespace MUES.Core
                 }
             }
 
-            SetVisibility(true);
-            ConsoleMessage.Send(true, $"Networked Transform - Object is now visible and ready for interaction", Color.green);
+            // Remove SetVisibility call - scale is handled in InitRoutine
+            ConsoleMessage.Send(true, $"Networked Transform - Object is now ready for interaction", Color.green);
         }
 
         /// <summary>
