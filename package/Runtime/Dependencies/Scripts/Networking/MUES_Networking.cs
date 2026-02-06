@@ -737,6 +737,8 @@ namespace MUES.Core
             if (!result.IsSuccess)
             {
                 Debug.LogError($"Room join failed: {result.ErrorMessage}");
+                MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
+                isJoiningAsClient = false;
                 OnRoomJoiningFailed?.Invoke();
             }
             else
@@ -779,7 +781,7 @@ namespace MUES.Core
         {
             yield return WaitForSessionMeta();
 
-            if (Instance == null)
+            if (MUES_SessionMeta.Instance == null)
             {
                 AbortJoin("Timeout waiting for Session Meta (10s). Cannot join session.");
                 yield break;
@@ -865,6 +867,9 @@ namespace MUES.Core
                 if (!teleportCompleted)
                     ConsoleMessage.Send(debugMode, "Teleport timeout reached, continuing anyway.", Color.yellow);
             }
+
+            MUES_RoomVisualizer.Instance.RenderRoomGeometry(true);
+            MUES_RoomVisualizer.Instance.ToggleVisualization();
 
             MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
             isConnected = true;
@@ -991,21 +996,29 @@ namespace MUES.Core
                 return true;
             }
 
-            var storedRoomData = meta.GetRoomData();
+            RoomData storedRoomData = null;
+            int maxRetries = 10;
+            int retryCount = 0;
+            
+            while (storedRoomData == null && retryCount < maxRetries)
+            {
+                storedRoomData = meta.GetRoomData();
+                if (storedRoomData == null)
+                {
+                    retryCount++;
+                    ConsoleMessage.Send(debugMode, $"[MUES_Networking] Waiting for room data sync... (attempt {retryCount}/{maxRetries})", Color.yellow);
+                    System.Threading.Thread.Sleep(200);
+                }
+            }
 
             if (storedRoomData != null)
             {
-                ConsoleMessage.Send(debugMode, "Loading compressed room data from Session Meta...", Color.cyan);
+                ConsoleMessage.Send(debugMode, "[MUES_Networking] Loading room data from Session Meta...", Color.cyan);
                 MUES_RoomVisualizer.Instance?.SetRoomData(storedRoomData);
                 return true;
             }
 
-            ConsoleMessage.Send(debugMode, "Loading cached room geometry for remote user (Legacy RPC fallback).", Color.cyan);
-            var roomVis = MUES_RoomVisualizer.Instance;
-
-            if (roomVis != null && roomVis.HasRoomData)
-                roomVis.SendRoomDataTo(player);
-
+            ConsoleMessage.Send(debugMode, "[MUES_Networking] Room data not found in Session Meta after retries. Remote client may not see room geometry.", Color.red);
             return true;
         }
 

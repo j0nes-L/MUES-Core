@@ -25,6 +25,7 @@ namespace MUES.Core
 
         [HideInInspector][Networked] public NetworkBool IsHmdMounted { get; set; } = true; // Default to true so avatars are visible by default
         [HideInInspector][Networked] public NetworkBool IsStabilizing { get; set; } = false; // True while avatar is stabilizing after HMD mount
+        [HideInInspector][Networked] public NetworkBool IsPositionInitialized { get; set; } = false; // True when avatar position has been properly set
 
         [HideInInspector] public bool IsLocallyMuted { get; private set; } = false; // True if this player is locally muted by the viewing user (not networked)
 
@@ -72,6 +73,8 @@ namespace MUES.Core
         private bool isWaitingAfterMount = false; // Flag to delay visibility after HMD mount
 
         private string cachedPlayerName; // Locally cached player name for use when network state is unavailable
+
+        private bool voiceSetupComplete = false; // Flag to track if voice setup has been completed
 
         void OnEnable()
         {
@@ -178,6 +181,10 @@ namespace MUES.Core
 
             headRenderer.enabled = handRendererR.enabled = handRendererL.enabled = false;
             nameTagCanvasGroup.alpha = 0f;
+            
+            if (head != null) head.gameObject.SetActive(false);
+            if (handMarkerRight != null) handMarkerRight.gameObject.SetActive(false);
+            if (handMarkerLeft != null) handMarkerLeft.gameObject.SetActive(false);
 
             afkMarker = transform.GetChild(3).gameObject;
             afkMarker.SetActive(false);
@@ -229,18 +236,33 @@ namespace MUES.Core
                 UserGuid = Guid.NewGuid().ToString();
                 IsHmdMounted = OVRManager.isHmdPresent;
                 IsRemote = MUES_Networking.Instance != null && MUES_Networking.Instance.isRemote;
+                
+                IsPositionInitialized = true;
+                
+                ConsoleMessage.Send(debugMode, $"Avatar - Local player position initialized at {transform.position}", Color.green);
             }
             else
             {
-                while (string.IsNullOrEmpty(UserGuid.ToString()))
+                float timeout = 10f;
+                float elapsed = 0f;
+                
+                while ((string.IsNullOrEmpty(UserGuid.ToString()) || !IsPositionInitialized) && elapsed < timeout)
                 {
-                    ConsoleMessage.Send(debugMode, "Avatar - Waiting for networked user GUID...", Color.yellow);
+                    ConsoleMessage.Send(debugMode, $"Avatar - Waiting for remote user data... GUID:{!string.IsNullOrEmpty(UserGuid.ToString())}, PosInit:{IsPositionInitialized}", Color.yellow);
+                    elapsed += Time.deltaTime;
                     yield return null;
                 }
 
+                if (!IsPositionInitialized)
+                    ConsoleMessage.Send(debugMode, "Avatar - Timeout waiting for position initialization from remote player!", Color.red);
+
                 AnchorToWorld();
-                ConsoleMessage.Send(debugMode, $"Avatar - Remote user: Using networked anchor offset/rotation for UserGuid={UserGuid}", Color.green);
+                ConsoleMessage.Send(debugMode, $"Avatar - Remote user: Position applied at {transform.position} for UserGuid={UserGuid}", Color.green);
             }
+
+            if (head != null) head.gameObject.SetActive(true);
+            if (handMarkerRight != null) handMarkerRight.gameObject.SetActive(true);
+            if (handMarkerLeft != null) handMarkerLeft.gameObject.SetActive(true);
 
             if (nameTag != null)
                 nameSmoothRot = nameTag.rotation;
@@ -273,10 +295,18 @@ namespace MUES.Core
 
             PlatformInit.GetEntitlementInformation(info =>
             {
-                if (info.IsEntitled && !string.IsNullOrEmpty(info.OculusUser?.DisplayName))
+                if (info.IsEntitled)
                 {
-                    fetchedName = info.OculusUser.DisplayName;
-                    ConsoleMessage.Send(debugMode, $"Avatar - Got name from PlatformInit: {fetchedName}", Color.green);
+                    if (!string.IsNullOrEmpty(info.OculusUser?.DisplayName))
+                        fetchedName = info.OculusUser.DisplayName;
+                    else if (!string.IsNullOrEmpty(info.OculusUser?.OculusID))
+                        fetchedName = info.OculusUser.OculusID;
+                    
+                    ConsoleMessage.Send(debugMode, $"Avatar - PlatformInit: Entitled={info.IsEntitled}, DisplayName='{info.OculusUser?.DisplayName}', OculusID='{info.OculusUser?.OculusID}'", Color.cyan);
+                }
+                else
+                {
+                    ConsoleMessage.Send(debugMode, "Avatar - PlatformInit: User not entitled!", Color.red);
                 }
                 fetchComplete = true;
             });
@@ -309,17 +339,15 @@ namespace MUES.Core
 
             if (!alreadyInitialized)
             {
-                ConsoleMessage.Send(debugMode, "Avatar - Initializing Oculus Platform...", Color.yellow);
-
                 try
                 {
                     Oculus.Platform.Core.AsyncInitialize().OnComplete(msg =>
                     {
                         platformInitialized = !msg.IsError;
                         platformInitComplete = true;
-                        ConsoleMessage.Send(debugMode,
-                            msg.IsError ? $"Avatar - Platform init error: {msg.GetError().Message}" : "Avatar - Oculus Platform initialized successfully.",
-                            msg.IsError ? Color.red : Color.green);
+                        
+                        if (msg.IsError)
+                            ConsoleMessage.Send(debugMode, $"Avatar - Platform init error: {msg.GetError().Message}", Color.red);
                     });
                 }
                 catch (Exception ex)
@@ -334,7 +362,6 @@ namespace MUES.Core
             else
             {
                 platformInitialized = true;
-                ConsoleMessage.Send(debugMode, "Avatar - Oculus Platform already initialized.", Color.cyan);
             }
 
             if (platformInitialized)
@@ -345,12 +372,17 @@ namespace MUES.Core
                     {
                         if (!userMsg.IsError && userMsg.Data != null)
                         {
-                            fetchedName = userMsg.Data.DisplayName;
-                            ConsoleMessage.Send(debugMode, $"Avatar - Got name from Oculus Platform: {fetchedName}", Color.green);
+                            if (!string.IsNullOrEmpty(userMsg.Data.DisplayName))
+                                fetchedName = userMsg.Data.DisplayName;
+                            else if (!string.IsNullOrEmpty(userMsg.Data.OculusID))
+                                fetchedName = userMsg.Data.OculusID;
+                            
+                            ConsoleMessage.Send(debugMode, $"Avatar - Oculus API: DisplayName='{userMsg.Data.DisplayName}', OculusID='{userMsg.Data.OculusID}', ID={userMsg.Data.ID}", Color.cyan);
                         }
                         else
                         {
-                            ConsoleMessage.Send(debugMode, $"Avatar - Failed to get user: {(userMsg.IsError ? userMsg.GetError().Message : "No data")}", Color.red);
+                            string error = userMsg.IsError ? userMsg.GetError().Message : "No data";
+                            ConsoleMessage.Send(debugMode, $"Avatar - Failed to get user: {error}", Color.red);
                         }
                         userFetchComplete = true;
                     });
@@ -366,7 +398,7 @@ namespace MUES.Core
 
             if (string.IsNullOrEmpty(fetchedName))
             {
-                ConsoleMessage.Send(debugMode, $"Avatar - Using fallback name: {fallbackPlayerName}", Color.yellow);
+                ConsoleMessage.Send(debugMode, $"Avatar - All methods failed! Using fallback: {fallbackPlayerName}", Color.yellow);
                 fetchedName = fallbackPlayerName;
             }
 
@@ -425,7 +457,20 @@ namespace MUES.Core
         public override void Render()
         {
             if (!initialized) return;
-            if (!Object.HasInputAuthority && anchorReady) AnchorToWorld();
+            
+            if (!Object.HasInputAuthority)
+            {
+                if (!IsPositionInitialized)
+                {
+                    if (headRenderer != null) headRenderer.enabled = false;
+                    if (handRendererR != null) handRendererR.enabled = false;
+                    if (handRendererL != null) handRendererL.enabled = false;
+                    if (nameTagCanvasGroup != null) nameTagCanvasGroup.alpha = 0f;
+                    return;
+                }
+                
+                if (anchorReady) AnchorToWorld();
+            }
 
             bool isCurrentlyStabilizing = Object.HasInputAuthority ? isWaitingAfterMount : IsStabilizing;
 
@@ -481,6 +526,8 @@ namespace MUES.Core
 
             UpdateHandMarker(showFullAvatar && LeftHandVisible, handMarkerLeft, handRendererL,
                 LeftHandLocalPos, LeftHandLocalRot, ref leftHandVel, ref leftHandSmoothRot);
+
+            EnsureVoiceComponentsActive();
         }
 
         private void UpdateHandMarker(bool visible, Transform marker, MeshRenderer renderer,
@@ -645,6 +692,8 @@ namespace MUES.Core
         /// </summary>
         private bool ShouldShowAvatar()
         {
+            if (!IsPositionInitialized) return false;
+            
             bool isCurrentlyStabilizing = Object.HasInputAuthority ? isWaitingAfterMount : IsStabilizing;
             if (!IsHmdMounted || isCurrentlyStabilizing) return false;
             return IsRemoteOrShowAvatars();
@@ -655,6 +704,8 @@ namespace MUES.Core
         /// </summary>
         private bool ShouldShowNameTagOnly()
         {
+            if (!IsPositionInitialized) return false;
+            
             bool isCurrentlyStabilizing = Object.HasInputAuthority ? isWaitingAfterMount : IsStabilizing;
             if (!IsHmdMounted || isCurrentlyStabilizing) return false;
 
@@ -706,23 +757,68 @@ namespace MUES.Core
             MUES_Networking net = MUES_Networking.Instance;
 
             bool isLocal = Object.HasInputAuthority;
-            bool amIRemote = net == null || net.isRemote;
 
             voiceRecorder.TransmitEnabled = isLocal;
             voiceRecorder.enabled = isLocal;
 
-            if (isLocal) ConsoleMessage.Send(debugMode, "Avatar - Voice Recorder enabled for local player.", Color.cyan);
+            if (isLocal)
+            {
+                ConsoleMessage.Send(debugMode, "Avatar - Voice Recorder enabled for local player.", Color.cyan);
 
-            bool enablePlayback = !isLocal && (amIRemote || IsRemote);
+                voiceSpeaker.enabled = false;
+                voiceAudioSource.enabled = false;
+                voiceAudioSource.mute = true;
+            }
+            else
+            {
+                voiceSpeaker.enabled = true;
+                voiceAudioSource.enabled = true;
+                voiceAudioSource.mute = false;
+                
+                voiceAudioSource.spatialBlend = 1f;
+                voiceAudioSource.minDistance = 1f;
+                voiceAudioSource.maxDistance = 20f;
+                voiceAudioSource.rolloffMode = AudioRolloffMode.Linear;
+                
+                voiceAudioSource.loop = false;
+                voiceAudioSource.playOnAwake = false;
+                
+                ConsoleMessage.Send(debugMode, $"Avatar - Voice playback enabled for non-local player. IsRemote: {IsRemote}", Color.green);
+            }
 
-            voiceSpeaker.enabled = enablePlayback;
-            voiceAudioSource.enabled = enablePlayback;
-            voiceAudioSource.mute = !enablePlayback;
+            voiceSetupComplete = true;
 
             string playerType = isLocal ? "Local" : "Remote";
-            string audioStatus = enablePlayback ? "ON" : "OFF (Muted/Local)";
+            string audioStatus = !isLocal ? "ON" : "OFF (Local player)";
 
-            ConsoleMessage.Send(debugMode, $"Avatar - {playerType} Voice Setup. Rec: {(isLocal ? "ON" : "OFF")}, Playback: {audioStatus}, IsRemote: {IsRemote}", Color.green);
+            ConsoleMessage.Send(debugMode, $"Avatar - {playerType} Voice Setup complete. Rec: {(isLocal ? "ON" : "OFF")}, Playback: {audioStatus}, Avatar.IsRemote: {IsRemote}", Color.green);
+        }
+
+        /// <summary>
+        /// Ensures voice components remain properly configured during runtime.
+        /// </summary>
+        private void EnsureVoiceComponentsActive()
+        {
+            if (!voiceSetupComplete || Object.HasInputAuthority) return;
+            if (voiceSpeaker == null || voiceAudioSource == null) return;
+            
+            if (!voiceSpeaker.enabled)
+            {
+                voiceSpeaker.enabled = true;
+                ConsoleMessage.Send(debugMode, "Avatar - Re-enabled voiceSpeaker that was disabled.", Color.yellow);
+            }
+            
+            if (!voiceAudioSource.enabled)
+            {
+                voiceAudioSource.enabled = true;
+                ConsoleMessage.Send(debugMode, "Avatar - Re-enabled voiceAudioSource that was disabled.", Color.yellow);
+            }
+            
+            if (voiceAudioSource.mute && !IsLocallyMuted)
+            {
+                voiceAudioSource.mute = false;
+                ConsoleMessage.Send(debugMode, "Avatar - Unmuted voiceAudioSource that was muted.", Color.yellow);
+            }
         }
 
         /// <summary>
