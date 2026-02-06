@@ -32,11 +32,16 @@ namespace MUES.Core
         [HideInInspector][Networked] public Vector3 HeadLocalPos { get; set; }  // Local position of the head relative to the avatar marker
         [HideInInspector][Networked] public Quaternion HeadLocalRot { get; set; }   // Local rotation of the head relative to the avatar marker
 
+        [HideInInspector][Networked] public Vector3 HeadAnchorRelativePos { get; set; }       // Head position relative to the anchor (floor-level) for consistent height across different devices
+
         [HideInInspector][Networked] public Vector3 RightHandLocalPos { get; set; } // Local position of the right hand relative to the avatar marker
         [HideInInspector][Networked] public Vector3 LeftHandLocalPos { get; set; }  // Local position of the left hand relative to the avatar marker
 
         [HideInInspector][Networked] public Quaternion RightHandLocalRot { get; set; }  // Local rotation of the right hand relative to the avatar marker
         [HideInInspector][Networked] public Quaternion LeftHandLocalRot { get; set; }   // Local rotation of the left hand relative to the avatar marker
+
+        [HideInInspector][Networked] public Vector3 RightHandAnchorRelativePos { get; set; }    // Right hand position relative to the anchor for consistent positioning in colocated scenarios
+        [HideInInspector][Networked] public Vector3 LeftHandAnchorRelativePos { get; set; } // Left hand position relative to the anchor for consistent positioning in colocated scenarios
 
         [HideInInspector][Networked] public NetworkBool RightHandVisible { get; set; }  // Visibility state of the right hand marker
         [HideInInspector][Networked] public NetworkBool LeftHandVisible { get; set; }   // Visibility state of the left hand marker
@@ -48,6 +53,8 @@ namespace MUES.Core
         [HideInInspector][Networked] public NetworkBool IsAfk { get; set; }  // True when HMD is unmounted or stabilizing
         [HideInInspector][Networked] public Vector3 AfkMarkerLocalPos { get; set; }  // Last known position for AFK marker (anchor-relative)
         [HideInInspector][Networked] public Quaternion AfkMarkerLocalRot { get; set; }  // Last known rotation for AFK marker (anchor-relative)
+
+        [HideInInspector][Networked] public float TrackingSpaceYOffset { get; set; }  // Y offset of the tracking space relative to the anchor (for height correction)
 
         [HideInInspector] public AudioSource voiceAudioSource;   // The AudioSource playing the users voice
 
@@ -185,12 +192,11 @@ namespace MUES.Core
 
             ConsoleMessage.Send(debugMode, $"Avatar - Voice Components found: Recorder={voiceRecorder != null}, Speaker={voiceSpeaker != null}, AudioSource={voiceAudioSource != null}", Color.cyan);
 
-            headRenderer.enabled = handRendererR.enabled = handRendererL.enabled = false;
-            nameTagCanvasGroup.alpha = 0f;
-            
-            if (head != null) head.gameObject.SetActive(false);
-            if (handMarkerRight != null) handMarkerRight.gameObject.SetActive(false);
-            if (handMarkerLeft != null) handMarkerLeft.gameObject.SetActive(false);
+            if (headRenderer != null) headRenderer.enabled = false;
+            if (handRendererR != null) handRendererR.enabled = false;
+            if (handRendererL != null) handRendererL.enabled = false;
+
+            if (nameTagCanvasGroup != null) nameTagCanvasGroup.alpha = 0f;
 
             afkMarker = transform.GetChild(3).gameObject;
             afkMarker.SetActive(false);
@@ -232,26 +238,32 @@ namespace MUES.Core
             if (Object.HasInputAuthority)
             {
                 var camPos = mainCam.position;
-                float markerY = anchor != null ? anchor.position.y : 0f;
+                float markerY = trackingSpace != null ? trackingSpace.position.y : (anchor != null ? anchor.position.y : 0f);
 
                 transform.SetPositionAndRotation(
                     new Vector3(camPos.x, markerY, camPos.z),
                     Quaternion.Euler(0f, mainCam.eulerAngles.y, 0f));
                 WorldToAnchor();
 
+                if (anchor != null && trackingSpace != null)
+                {
+                    TrackingSpaceYOffset = trackingSpace.position.y - anchor.position.y;
+                    ConsoleMessage.Send(debugMode, $"Avatar - TrackingSpaceYOffset set to: {TrackingSpaceYOffset}", Color.cyan);
+                }
+
                 UserGuid = Guid.NewGuid().ToString();
                 IsHmdMounted = OVRManager.isHmdPresent;
                 IsRemote = MUES_Networking.Instance != null && MUES_Networking.Instance.isRemote;
-                
+
                 IsPositionInitialized = true;
-                
-                ConsoleMessage.Send(debugMode, $"Avatar - Local player initialized. IsRemote={IsRemote}", Color.green);
+
+                ConsoleMessage.Send(debugMode, $"Avatar - Local player initialized. IsRemote={IsRemote}, MarkerY={markerY}", Color.green);
             }
             else
             {
                 float timeout = 10f;
                 float elapsed = 0f;
-                
+
                 while ((string.IsNullOrEmpty(UserGuid.ToString()) || !IsPositionInitialized) && elapsed < timeout)
                 {
                     ConsoleMessage.Send(debugMode, $"Avatar - Waiting for remote user data... GUID:{!string.IsNullOrEmpty(UserGuid.ToString())}, PosInit:{IsPositionInitialized}", Color.yellow);
@@ -269,17 +281,9 @@ namespace MUES.Core
                 ConsoleMessage.Send(debugMode, $"Avatar - Remote user initialized. IsRemote={IsRemote}, UserGuid={UserGuid}", Color.green);
             }
 
-            if (head != null) head.gameObject.SetActive(true);
-            if (handMarkerRight != null) handMarkerRight.gameObject.SetActive(true);
-            if (handMarkerLeft != null) handMarkerLeft.gameObject.SetActive(true);
-
-            if (nameTag != null)
-                nameSmoothRot = nameTag.rotation;
-
+            if (nameTag != null) nameSmoothRot = nameTag.rotation;
             yield return FetchOculusUsername();
-
-            if (nameTag != null)
-                nameTagCanvasGroup.alpha = 1f;
+            if (nameTag != null) nameTagCanvasGroup.alpha = 1f;
 
             if (Object.HasInputAuthority)
                 SetupVoiceComponents();
@@ -289,12 +293,8 @@ namespace MUES.Core
                 StartCoroutine(DelayedVoiceSetup());
             }
 
-            if (destroyOwnMarker && Object.HasInputAuthority)
-                StartCoroutine(DestroyOwnMarkerRoutine());
-
-            if (headRenderer != null)
-                headRenderer.enabled = ShouldShowAvatar();
-
+            if (destroyOwnMarker && Object.HasInputAuthority)StartCoroutine(DestroyOwnMarkerRoutine());
+            if (headRenderer != null)headRenderer.enabled = ShouldShowAvatar();
             initialized = true;
 
             ConsoleMessage.Send(debugMode, "Avatar - Component Init ready. - Avatar Setup complete", Color.green);
@@ -539,21 +539,29 @@ namespace MUES.Core
                 nameTag.localPosition = Vector3.Lerp(nameTag.localPosition, nameTagTargetPos, Time.deltaTime * 5f);
             }
 
+            bool useAnchorRelativePositioning = ShouldUseAnchorRelativePositioning();
+
             if (head != null)
             {
-                head.SetPositionAndRotation(
-                    transform.TransformPoint(HeadLocalPos),
-                    transform.rotation * HeadLocalRot);
+                Vector3 headWorldPos;
+                if (useAnchorRelativePositioning && anchor != null && HeadAnchorRelativePos != Vector3.zero)
+                    headWorldPos = anchor.TransformPoint(HeadAnchorRelativePos);
+                else
+                    headWorldPos = transform.TransformPoint(HeadLocalPos);
+                
+                head.SetPositionAndRotation(headWorldPos, transform.rotation * HeadLocalRot);
             }
 
             if (headRenderer != null)
                 headRenderer.enabled = showFullAvatar;
 
             UpdateHandMarker(showFullAvatar && RightHandVisible, handMarkerRight, handRendererR,
-                RightHandLocalPos, RightHandLocalRot, ref rightHandVel, ref rightHandSmoothRot);
+                RightHandLocalPos, RightHandLocalRot, RightHandAnchorRelativePos, 
+                useAnchorRelativePositioning, ref rightHandVel, ref rightHandSmoothRot);
 
             UpdateHandMarker(showFullAvatar && LeftHandVisible, handMarkerLeft, handRendererL,
-                LeftHandLocalPos, LeftHandLocalRot, ref leftHandVel, ref leftHandSmoothRot);
+                LeftHandLocalPos, LeftHandLocalRot, LeftHandAnchorRelativePos,
+                useAnchorRelativePositioning, ref leftHandVel, ref leftHandSmoothRot);
 
             voiceCheckTimer += Time.deltaTime;
             if (voiceCheckTimer >= 2f)
@@ -564,17 +572,36 @@ namespace MUES.Core
         }
 
         /// <summary>
+        /// Determines if anchor-relative positioning should be used for this avatar.
+        /// </summary>
+        private bool ShouldUseAnchorRelativePositioning()
+        {
+            if (Object.HasInputAuthority) return false;
+
+            var net = MUES_Networking.Instance;
+            if (net == null) return false;
+            
+            return net.isRemote || IsRemote;
+        }
+
+        /// <summary>
         /// Updates the position, rotation, and visibility of a hand marker based on the provided parameters.
         /// </summary>
         private void UpdateHandMarker(bool visible, Transform marker, MeshRenderer renderer,
-            Vector3 localPos, Quaternion localRot, ref Vector3 vel, ref Quaternion smoothRot)
+            Vector3 localPos, Quaternion localRot, Vector3 anchorRelativePos,
+            bool useAnchorRelative, ref Vector3 vel, ref Quaternion smoothRot)
         {
             if (renderer != null)
                 renderer.enabled = visible;
 
             if (!visible || marker == null) return;
 
-            var targetPos = transform.TransformPoint(localPos);
+            Vector3 targetPos;
+            if (useAnchorRelative && anchor != null && anchorRelativePos != Vector3.zero)
+                targetPos = anchor.TransformPoint(anchorRelativePos);
+            else
+                targetPos = transform.TransformPoint(localPos);
+            
             var smoothPos = Vector3.SmoothDamp(marker.position, targetPos, ref vel, handSmoothTime);
             var targetRot = transform.rotation * localRot;
             smoothRot = Quaternion.Slerp(marker.rotation, targetRot, Time.deltaTime * rotationSmoothSpeed);
@@ -596,6 +623,9 @@ namespace MUES.Core
             HeadLocalPos = transform.InverseTransformPoint(headWorldPos);
             HeadLocalRot = Quaternion.Inverse(transform.rotation) * headWorldRot;
 
+            if (anchor != null)
+                HeadAnchorRelativePos = anchor.InverseTransformPoint(headWorldPos);
+
             if (!IsHmdMounted || IsAfk) return;
 
             bool handTracking =
@@ -610,16 +640,18 @@ namespace MUES.Core
 
             if (RightHandVisible)
             {
-                GetHandNetworkData(ctrlR, handTracking, out var posR, out var rotR);
+                GetHandNetworkData(ctrlR, handTracking, out var posR, out var rotR, out var anchorPosR);
                 RightHandLocalPos = posR;
                 RightHandLocalRot = rotR;
+                RightHandAnchorRelativePos = anchorPosR;
             }
 
             if (LeftHandVisible)
             {
-                GetHandNetworkData(ctrlL, handTracking, out var posL, out var rotL);
+                GetHandNetworkData(ctrlL, handTracking, out var posL, out var rotL, out var anchorPosL);
                 LeftHandLocalPos = posL;
                 LeftHandLocalRot = rotL;
+                LeftHandAnchorRelativePos = anchorPosL;
             }
         }
 
@@ -627,7 +659,7 @@ namespace MUES.Core
         /// Gets the local position and rotation of a hand marker for network synchronization.
         /// </summary>
         private void GetHandNetworkData(OVRInput.Controller ctrl, bool handTracking,
-            out Vector3 localPos, out Quaternion localRot)
+            out Vector3 localPos, out Quaternion localRot, out Vector3 anchorRelativePos)
         {
             const float controllerBackOffset = 0.05f;
 
@@ -655,6 +687,8 @@ namespace MUES.Core
 
             localPos = transform.InverseTransformPoint(markerWorldPos);
             localRot = Quaternion.Inverse(transform.rotation) * markerWorldRot;
+            
+            anchorRelativePos = anchor != null ? anchor.InverseTransformPoint(markerWorldPos) : localPos;
         }
 
         /// <summary>

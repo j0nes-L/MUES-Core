@@ -470,6 +470,9 @@ namespace MUES.Core
                     return;
                 }
 
+                SetLayerRecursively(wrapper.transform, LayerMask.NameToLayer("Default"));
+                DisableEnvironmentDepthOcclusionForModel(wrapper.transform);
+
                 ConsoleMessage.Send(true, "Networked Transform - Starting Collider Generation...", Color.cyan);
                 await AddMeshCollidersAsync(wrapper.transform);
 
@@ -479,6 +482,47 @@ namespace MUES.Core
             {
                 objectManager?.ReleaseInstantiationPermit();
             }
+        }
+
+        /// <summary>
+        /// Sets the layer recursively for all child objects.
+        /// </summary>
+        private void SetLayerRecursively(Transform parent, int layer)
+        {
+            parent.gameObject.layer = layer;
+            foreach (Transform child in parent)
+                SetLayerRecursively(child, layer);
+        }
+
+        /// <summary>
+        /// Disables environment depth occlusion for all renderers in the model.
+        /// </summary>
+        private void DisableEnvironmentDepthOcclusionForModel(Transform root)
+        {
+            var renderers = root.GetComponentsInChildren<Renderer>(true);
+            
+            foreach (var renderer in renderers)
+            {
+                if (renderer == null) continue;
+                
+                foreach (var material in renderer.materials)
+                {
+                    if (material == null) continue;
+
+                    if (material.HasProperty("_EnvironmentDepthBias"))
+                        material.SetFloat("_EnvironmentDepthBias", 1.0f);
+
+                    if (material.HasProperty("_EnableOcclusionHardDepthSensitivity"))
+                        material.SetFloat("_EnableOcclusionHardDepthSensitivity", 0f);
+
+                    material.DisableKeyword("HARD_OCCLUSION");
+                    material.DisableKeyword("SOFT_OCCLUSION");
+
+                    material.EnableKeyword("_ENVIRONMENTDEPTHOCCLUSION_OFF");
+                }
+            }
+            
+            ConsoleMessage.Send(true, $"Networked Transform - Disabled environment depth occlusion for {renderers.Length} renderers.", Color.cyan);
         }
 
         /// <summary>

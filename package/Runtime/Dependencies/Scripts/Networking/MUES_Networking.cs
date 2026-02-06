@@ -11,6 +11,8 @@ using UnityEngine.SceneManagement;
 using static Meta.XR.MultiplayerBlocks.Shared.CustomMatchmaking;
 using static OVRInput;
 using Meta.XR;
+using UnityEngine.EventSystems;
+
 
 #if UNITY_EDITOR
 using UnityEditor;
@@ -59,7 +61,6 @@ namespace MUES.Core
         [HideInInspector] public bool isRemote, isConnected, isJoiningAsClient;  // Networking state flags.
         [HideInInspector] public PlayerRef _previousMasterClient = PlayerRef.None; // Previous master client reference.
 
-        private Vector3 _sceneVelocity; // Velocity for scene smoothing.
         private NetworkRunner _runnerPrefab;    // Prefab for the NetworkRunner.
         private MRUK _mruk; // Reference to the MRUK component.
         private EnvironmentRaycastManager raycastManager; // Reference to the environment raycast manager.
@@ -72,14 +73,7 @@ namespace MUES.Core
         
         [HideInInspector] public MRUKRoom activeRoom; // Reference to the active MRUKRoom used for lobby creation.
 
-        private const float maxDistanceThreshold = 0.5f;  // Maximum distance in meters to consider the anchor valid.
-        private const float glitchTimeThreshold = 0.5f;   // Time in seconds to consider a glitch valid.
-        private float _glitchTimer;    // Timer for tracking how long the anchor has been out of bounds.
-        private Vector3 _lastValidAnchorPos;    // Last valid position of the anchor.
-        private Quaternion _lastValidAnchorRot; // Last valid rotation of the anchor.
-        private bool _isFirstFrame = true;  // Flag to check if it's the first frame of update.
-        private const float sceneParentPositionSmoothing = 0.5f; // Smoothing factor for scene parent position.
-        private const float sceneParentRotationSmoothing = 2f;   // Smoothing factor for scene parent rotation.
+        private MUES_SceneParentStabilizer _sceneParentStabilizer;
 
         private Camera mainCam => Camera.main;  // Main camera reference.
         public static MUES_Networking Instance { get; private set; }
@@ -209,6 +203,8 @@ namespace MUES.Core
             if (Instance == null)
                 Instance = this;
 
+            _sceneParentStabilizer = new MUES_SceneParentStabilizer();
+
             ImmersiveSceneDebugger debugger = FindFirstObjectByType<ImmersiveSceneDebugger>();
 
             if (debugger && isActiveAndEnabled)
@@ -242,7 +238,6 @@ namespace MUES.Core
         {
             ConfirmRoomCreation();
             depthIndex.gameObject.SetActive(isInitalizingRoomCreation);
-            UpdateSceneParent();
 
             Vector3 camForwardFlat = Vector3.ProjectOnPlane(mainCam.transform.forward, Vector3.up).normalized;
             Vector3 camPos = mainCam.transform.position;
@@ -250,6 +245,8 @@ namespace MUES.Core
             if (depthIndex.gameObject.activeSelf)
                 depthIndex.transform.position = camPos + camForwardFlat * 0.7f;
         }
+
+        private void LateUpdate() => _sceneParentStabilizer.UpdateSceneParent(sceneParent, anchorTransform, debugMode, "[MUES_Networking]");
 
         void OnEnable() => OVRManager.HMDMounted += () => StartCoroutine(ShowLoadingOnHMDMounted());
 
@@ -334,6 +331,8 @@ namespace MUES.Core
         /// </summary>
         public async void InitSharedRoom()
         {
+            raycastManager.gameObject.SetActive(false);
+
             OnLobbyCreationStarted?.Invoke();
             var loadResult = await LoadSceneWithTimeout(_mruk, 5f);
 
@@ -468,12 +467,10 @@ namespace MUES.Core
                 return;
             }
 
-            var (anchorPos, flatRotation) = GetFloorAlignedPose(anchorTransform);
+            var (anchorPos, flatRotation) = MUES_SceneParentStabilizer.GetFloorAlignedPose(anchorTransform);
 
             sceneParent.SetPositionAndRotation(anchorPos, flatRotation);
-            _lastValidAnchorPos = anchorPos;
-            _lastValidAnchorRot = flatRotation;
-            _isFirstFrame = false;
+            _sceneParentStabilizer.Initialize(anchorPos, flatRotation);
 
             ConsoleMessage.Send(debugMode, $"InitSceneParent: Synced SCENE_PARENT to anchor at {anchorPos}", Color.green);
 
@@ -495,7 +492,7 @@ namespace MUES.Core
             spatialAnchorCore.EraseAllAnchors();
             MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
             
-            activeRoom = null; // Clear the active room reference on abort
+            activeRoom = null;
 
             OnRoomCreationFailed?.Invoke();
             isCreatingRoom = false;
@@ -1085,36 +1082,19 @@ namespace MUES.Core
         /// Calculates a floor-aligned position from a transform, using the tracking space Y if available.
         /// </summary>
         public static Vector3 GetFloorAlignedPosition(Transform sourceTransform, float? overrideY = null)
-        {
-            float yPos = overrideY ?? 0f;
-
-            if (!overrideY.HasValue)
-            {
-                var rig = FindFirstObjectByType<OVRCameraRig>();
-                yPos = rig != null ? rig.trackingSpace.position.y : 0f;
-            }
-
-            return new Vector3(sourceTransform.position.x, yPos, sourceTransform.position.z);
-        }
+            => MUES_SceneParentStabilizer.GetFloorAlignedPosition(sourceTransform, overrideY);
 
         /// <summary>
         /// Calculates a flat (Y-axis only) rotation from a transform's forward direction.
         /// </summary>
         public static Quaternion GetFlatRotation(Transform sourceTransform)
-        {
-            Vector3 flatForward = Vector3.ProjectOnPlane(sourceTransform.forward, Vector3.up).normalized;
-            return flatForward.sqrMagnitude > 0.001f
-                ? Quaternion.LookRotation(flatForward, Vector3.up)
-                : Quaternion.identity;
-        }
+            => MUES_SceneParentStabilizer.GetFlatRotation(sourceTransform);
 
         /// <summary>
         /// Gets both floor-aligned position and flat rotation from a transform.
         /// </summary>
         public static (Vector3 position, Quaternion rotation) GetFloorAlignedPose(Transform sourceTransform, float? overrideY = null)
-        {
-            return (GetFloorAlignedPosition(sourceTransform, overrideY), GetFlatRotation(sourceTransform));
-        }
+            => MUES_SceneParentStabilizer.GetFloorAlignedPose(sourceTransform, overrideY);
 
         /// <summary>
         /// Finds or creates the SCENE_PARENT GameObject and returns its transform.
@@ -1272,57 +1252,6 @@ namespace MUES.Core
             MUES_RoomVisualizer.Instance.HideSceneWhileLoading(true);
             yield return new WaitForSeconds(3f);
             MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
-        }
-
-        /// <summary>
-        /// Updates the scene parent transform based on the anchor transform, applying glitch filtering.
-        /// </summary>
-        private void UpdateSceneParent()
-        {
-            if (sceneParent == null || anchorTransform == null) return;
-
-            Vector3 currentAnchorPos = GetFloorAlignedPosition(anchorTransform);
-            Quaternion currentAnchorRot = GetFlatRotation(anchorTransform);
-
-            if (_isFirstFrame)
-            {
-                _lastValidAnchorPos = currentAnchorPos;
-                _lastValidAnchorRot = currentAnchorRot;
-                _isFirstFrame = false;
-            }
-
-            float distance = Vector3.Distance(_lastValidAnchorPos, currentAnchorPos);
-            Vector3 targetPos;
-            Quaternion targetRot;
-
-            if (distance > maxDistanceThreshold)
-            {
-                _glitchTimer += Time.deltaTime;
-
-                if (_glitchTimer > glitchTimeThreshold)
-                {
-                    targetPos = currentAnchorPos;
-                    targetRot = currentAnchorRot;
-                    _lastValidAnchorPos = currentAnchorPos;
-                    _lastValidAnchorRot = currentAnchorRot;
-                }
-                else
-                {
-                    targetPos = _lastValidAnchorPos;
-                    targetRot = _lastValidAnchorRot;
-                }
-            }
-            else
-            {
-                _glitchTimer = 0f;
-                targetPos = currentAnchorPos;
-                targetRot = currentAnchorRot;
-                _lastValidAnchorPos = currentAnchorPos;
-                _lastValidAnchorRot = currentAnchorRot;
-            }
-
-            sceneParent.position = Vector3.SmoothDamp(sceneParent.position, targetPos, ref _sceneVelocity, sceneParentPositionSmoothing);
-            sceneParent.rotation = Quaternion.Slerp(sceneParent.rotation, targetRot, Time.deltaTime * sceneParentRotationSmoothing);
         }
 
         /// <summary>
@@ -1522,6 +1451,8 @@ namespace MUES.Core
             anchorGroupUuid = Guid.Empty;
             anchorTransform = sceneParent = null;
             activeRoom = null;
+
+            _sceneParentStabilizer.Reset();
 
             isConnected = isCreatingRoom = isJoiningAsClient = false;
             isRemote = false;

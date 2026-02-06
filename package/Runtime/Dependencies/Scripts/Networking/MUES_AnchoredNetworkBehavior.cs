@@ -14,7 +14,7 @@ namespace MUES.Core
         private readonly float anchorPositionSmoothTime = 0.35f;    // Smoothing time for position updates
         private readonly float anchorRotationSmoothSpeed = 7f;  // Smoothing speed for rotation updates
 
-        private protected Transform anchor; // The anchor transform to which this object is anchored
+        private protected Transform anchor; // The anchor transform to which this object is anchored (sceneParent for both colocated and remote)
         private protected bool anchorReady; // Indicates if the anchor is ready for use
 
         private Vector3 anchorPosVelocity;  // Velocity used for position smoothing
@@ -22,7 +22,7 @@ namespace MUES.Core
         private bool anchorSmoothingInitialized;    // Indicates if smoothing has been initialized
 
         /// <summary>
-        /// Initializes the anchor by waiting for the networking instance and the room center anchor to become available.
+        /// Initializes the anchor by waiting for the networking instance and the scene parent to become available.
         /// </summary>
         protected IEnumerator InitAnchorRoutine()
         {
@@ -33,6 +33,7 @@ namespace MUES.Core
                 yield return null;
 
             var net = MUES_Networking.Instance;
+            var roomVis = MUES_RoomVisualizer.Instance;
 
             float timeout = 10f;
             float elapsed = 0f;
@@ -41,11 +42,11 @@ namespace MUES.Core
             {
                 if (net.isRemote)
                 {
-                    var virtualRoom = MUES_RoomVisualizer.Instance?.virtualRoom;
-                    if (virtualRoom != null)
+                    var remoteSceneParent = roomVis?.GetRemoteSceneParent();
+                    if (remoteSceneParent != null)
                     {
-                        anchor = virtualRoom.transform;
-                        ConsoleMessage.Send(true, $"AnchoredNetworkBehavior - Remote client using virtualRoom as anchor: {anchor.name} at {anchor.position}, rot: {anchor.rotation.eulerAngles}", Color.cyan);
+                        anchor = remoteSceneParent;
+                        ConsoleMessage.Send(true, $"AnchoredNetworkBehavior - Remote client using REMOTE_SCENE_PARENT as anchor: {anchor.name} at {anchor.position}, rot: {anchor.rotation.eulerAngles}", Color.cyan);
                     }
                 }
                 else
@@ -74,7 +75,7 @@ namespace MUES.Core
 
                 if (anchor == null)
                 {
-                    ConsoleMessage.Send(true, $"Waiting for anchor... (isRemote={net.isRemote}, sceneParent={net.sceneParent != null}, anchorTransform={net.anchorTransform != null}, virtualRoom={MUES_RoomVisualizer.Instance?.virtualRoom != null})", Color.yellow);
+                    ConsoleMessage.Send(true, $"Waiting for anchor... (isRemote={net.isRemote}, sceneParent={net.sceneParent != null}, anchorTransform={net.anchorTransform != null}, remoteSceneParent={roomVis?.GetRemoteSceneParent() != null})", Color.yellow);
                     elapsed += Time.deltaTime;
                     yield return null;
                 }
@@ -87,11 +88,9 @@ namespace MUES.Core
                 yield break;
             }
 
-            if (!net.isRemote && net.sceneParent != null)
-            {
-                transform.SetParent(net.sceneParent, true);
-                ConsoleMessage.Send(true, $"ANCHORED BEHAVIOR - Parented to SCENE_PARENT: {net.sceneParent.name} at {net.sceneParent.position}", Color.green);
-            }
+
+            transform.SetParent(anchor, true);
+            ConsoleMessage.Send(true, $"ANCHORED BEHAVIOR - Parented to {anchor.name} at {anchor.position}", Color.green);
 
             anchorReady = true;
             ConsoleMessage.Send(true, $"ANCHORED BEHAVIOR - Anchor ready: {anchor.name} at {anchor.position}, rot: {anchor.rotation.eulerAngles}", Color.green);

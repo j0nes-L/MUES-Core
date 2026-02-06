@@ -62,6 +62,10 @@ namespace MUES.Core
         private bool chairPlacement, sceneShown, chairAnimInProgress = false;  // State variables for scene visualization.
         private readonly List<GameObject> roomPrefabs = new();   // List to store room prefabs. (Same order as in AnchorPrefabSpawner)
 
+        private OVRSpatialAnchor _remoteLocalAnchor; // Local spatial anchor for remote clients (analogous to shared spatial anchor for colocated)
+        private Transform remoteSceneParent; // Scene parent for remote clients - mirrors MUES_Networking.sceneParent behavior
+        private MUES_SceneParentStabilizer _remoteStabilizer; // Shared stabilizer utility for remote clients
+
         public static float floorHeight = 0f; // Static variable to hold the floor height.
         public static MUES_RoomVisualizer Instance { get; private set; }
 
@@ -103,9 +107,12 @@ namespace MUES.Core
         public static event Action OnTeleportCompleted;
 
         #endregion
+
         private void Awake()
         {
             if (Instance == null) Instance = this;
+
+            _remoteStabilizer = new MUES_SceneParentStabilizer();
 
             var debugger = FindFirstObjectByType<ImmersiveSceneDebugger>();
 
@@ -150,6 +157,8 @@ namespace MUES.Core
             }
         }
 
+        private void LateUpdate() => UpdateRemoteSceneParent();
+
         #region Scene Mesh Data Serialization - Capture
 
         /// <summary>
@@ -183,6 +192,8 @@ namespace MUES.Core
             ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] Capturing room: {room.name} with {room.Anchors.Count} anchors.", Color.cyan);
 
             room.transform.localScale = Vector3.one;
+
+            yield return null;
 
             Transform referenceTransform = net?.sceneParent ?? room.transform;
 
@@ -260,9 +271,20 @@ namespace MUES.Core
                 floorCeilingData = _floorCeilingData
             };
 
-            currentTableTransforms = FindObjectsByType<Transform>(FindObjectsSortMode.None)
-                .Where(t => t.name == "TABLE")
+            currentTableTransforms.Clear();
+           
+            var tableAnchors = FindObjectsByType<MRUKAnchor>(FindObjectsSortMode.None)
+                .Where(a => a.Label == MRUKAnchor.SceneLabels.TABLE)
+                .Select(a => a.transform)
                 .ToList();
+            
+            foreach (var table in tableAnchors)
+            {
+                if (!currentTableTransforms.Contains(table))
+                    currentTableTransforms.Add(table);
+            }
+            
+            ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] Found {currentTableTransforms.Count} tables)", Color.cyan);
 
             foreach (var table in currentTableTransforms)
             {
@@ -277,26 +299,50 @@ namespace MUES.Core
 
             if (floorTransform == null)
             {
-                Debug.LogError("[MUES_RoomVisualizer] CaptureRoomRoutine: Room center transform is null!");
+                var floorAnchor = anchors.FirstOrDefault(a => a.name == "FLOOR");
+                if (floorAnchor != null)
+                {
+                    floorTransform = floorAnchor.transform;
+                    ConsoleMessage.Send(debugMode, "[MUES_RoomVisualizer] Using FLOOR anchor from room as fallback.", Color.yellow);
+                }
+                else
+                {
+                    Debug.LogError("[MUES_RoomVisualizer] CaptureRoomRoutine: Room center transform is null and no FLOOR anchor found!");
+                    net.LeaveRoom();
+                    yield break;
+                }
+            }
+
+            if (floorTransform.childCount == 0)
+            {
+                Debug.LogError("[MUES_RoomVisualizer] CaptureRoomRoutine: FLOOR has no child objects!");
                 net.LeaveRoom();
                 yield break;
             }
 
             floor = floorTransform.GetChild(0).gameObject;
-            floor.transform.GetComponent<Renderer>().enabled = false;
+            
+            var floorRenderer = floor.transform.GetComponent<Renderer>();
+            if (floorRenderer != null)
+                floorRenderer.enabled = false;
 
-            if (floorTransform.TryGetComponent<MRUKAnchor>(out var floorAnchor))
-                floorAnchor.enabled = false;
+            if (floorTransform.TryGetComponent<MRUKAnchor>(out var floorMRUKAnchor))
+                floorMRUKAnchor.enabled = false;
 
             floor.transform.parent.SetParent(net.sceneParent, true);
 
-            var rb = floor.AddComponent<Rigidbody>();
-            rb.isKinematic = true;
-            rb.useGravity = false;
+            if (!floor.TryGetComponent<Rigidbody>(out _))
+            {
+                var rb = floor.AddComponent<Rigidbody>();
+                rb.isKinematic = true;
+                rb.useGravity = false;
+            }
 
             floor.layer = LayerMask.NameToLayer("MUES_Floor");
 
             Destroy(room.gameObject);
+            
+            yield return new WaitForSeconds(0.1f);       
             yield return SwitchToChairPlacement(true);
         }
 
@@ -497,21 +543,32 @@ namespace MUES.Core
             var net = MUES_Networking.Instance;
             if (net != null)
             {
-                if (net.sceneParent == null) net.InitSceneParent();
-
-                if (net.sceneParent != null)
+                if (net.isRemote)
                 {
-                    virtualRoom.transform.SetParent(net.sceneParent, false);
+                    remoteSceneParent = GetOrCreateRemoteSceneParent();
+                    remoteSceneParent.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+                    
+                    virtualRoom.transform.SetParent(remoteSceneParent, false);
                     virtualRoom.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
                     virtualRoom.transform.localScale = Vector3.one;
-
-                    if (net.isRemote)
-                        ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] InstantiateRoomGeometry: Remote client - Parented virtualRoom to SceneParent.", Color.green);
+                    
+                    ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] InstantiateRoomGeometry: Remote client - Room parented to REMOTE_SCENE_PARENT at origin, will be anchored after teleport.", Color.cyan);
                 }
                 else
                 {
-                    virtualRoom.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
-                    ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] InstantiateRoomGeometry: SceneParent null even after Init attempt. Placing at origin.", Color.yellow);
+                    if (net.sceneParent == null) net.InitSceneParent();
+
+                    if (net.sceneParent != null)
+                    {
+                        virtualRoom.transform.SetParent(net.sceneParent, false);
+                        virtualRoom.transform.SetLocalPositionAndRotation(Vector3.zero, Quaternion.identity);
+                        virtualRoom.transform.localScale = Vector3.one;
+                    }
+                    else
+                    {
+                        virtualRoom.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+                        ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] InstantiateRoomGeometry: SceneParent null even after Init attempt. Placing at origin.", Color.yellow);
+                    }
                 }
             }
             else
@@ -568,6 +625,20 @@ namespace MUES.Core
         }
 
         /// <summary>
+        /// Finds or creates the REMOTE_SCENE_PARENT GameObject for remote clients.
+        /// </summary>
+        private Transform GetOrCreateRemoteSceneParent()
+        {
+            GameObject parent = GameObject.Find("REMOTE_SCENE_PARENT") ?? new GameObject("REMOTE_SCENE_PARENT");
+            return parent.transform;
+        }
+
+        /// <summary>
+        /// Gets the remote scene parent transform. Returns null if not a remote client.
+        /// </summary>
+        public Transform GetRemoteSceneParent() => remoteSceneParent;
+
+        /// <summary>
         /// Teleports the local OVRCameraRig to the first available chair in the scene. (REMOTE CLIENT ONLY)    
         /// </summary>
         public IEnumerator TeleportToFirstFreeChair()
@@ -619,8 +690,9 @@ namespace MUES.Core
             {
                 ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] No free chair found, teleporting to room center and activating teleport surface.", Color.yellow);
                 Transform roomCenter = MUES_Networking.GetRoomCenter();
-                targetPosition = roomCenter.position;
-                Instantiate(teleportSurface, targetPosition, Quaternion.identity, roomCenter);
+                targetPosition = roomCenter != null ? roomCenter.position : Vector3.zero;
+                if (roomCenter != null)
+                    Instantiate(teleportSurface, targetPosition, Quaternion.identity, roomCenter);
             }
 
             var ovrManager = OVRManager.instance;
@@ -643,7 +715,66 @@ namespace MUES.Core
             else
                 ovrManager.transform.SetPositionAndRotation(targetPosition, ovrManager.transform.rotation);
 
+            yield return CreateRemoteLocalAnchor();
             OnTeleportCompleted?.Invoke();
+        }
+
+        /// <summary>
+        /// Creates a local OVRSpatialAnchor for remote clients to stabilize the scene parent position against HMD recentering.
+        /// </summary>
+        private IEnumerator CreateRemoteLocalAnchor()
+        {
+            var net = MUES_Networking.Instance;
+            if (net == null || !net.isRemote || remoteSceneParent == null)
+            {
+                ConsoleMessage.Send(debugMode, "[MUES_RoomVisualizer] CreateRemoteLocalAnchor skipped - not applicable.", Color.yellow);
+                yield break;
+            }
+
+            Vector3 anchorPosition = remoteSceneParent.position;
+            Quaternion anchorRotation = remoteSceneParent.rotation;
+
+            GameObject anchorGO = new GameObject("RemoteLocalAnchor");
+            anchorGO.transform.SetPositionAndRotation(anchorPosition, anchorRotation);
+
+            _remoteLocalAnchor = anchorGO.AddComponent<OVRSpatialAnchor>();
+
+            float timeout = 5f;
+            float elapsed = 0f;
+            while (!_remoteLocalAnchor.Created && elapsed < timeout)
+            {
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+
+            if (_remoteLocalAnchor.Created)
+            {
+                _remoteStabilizer.Initialize(anchorPosition, anchorRotation);               
+                ConsoleMessage.Send(debugMode, $"[MUES_RoomVisualizer] Remote local anchor created at {anchorPosition}. REMOTE_SCENE_PARENT will now be stabilized (mirrors colocated behavior).", Color.green);
+            }
+            else
+            {
+                ConsoleMessage.Send(debugMode, "[MUES_RoomVisualizer] Failed to create remote local anchor - scene may drift on recenter.", Color.yellow);
+                Destroy(anchorGO);
+                _remoteLocalAnchor = null;
+
+                MUES_Networking.Instance.LeaveRoom();
+            }
+        }
+
+        /// <summary>
+        /// Updates the remote scene parent position for remote clients based on the local spatial anchor.
+        /// </summary>
+        private void UpdateRemoteSceneParent()
+        {
+            var net = MUES_Networking.Instance;
+            if (net == null || !net.isRemote || remoteSceneParent == null || !_remoteStabilizer.IsInitialized)
+                return;
+
+            if (_remoteLocalAnchor == null || !_remoteLocalAnchor.Localized)
+                return;
+
+            _remoteStabilizer.UpdateSceneParent(remoteSceneParent, _remoteLocalAnchor.transform, debugMode, "[MUES_RoomVisualizer]");
         }
 
         #endregion
@@ -782,6 +913,20 @@ namespace MUES.Core
                 Destroy(virtualRoom);
                 virtualRoom = null;
             }
+
+            if (_remoteLocalAnchor != null)
+            {
+                Destroy(_remoteLocalAnchor.gameObject);
+                _remoteLocalAnchor = null;
+            }
+            
+            if (remoteSceneParent != null)
+            {
+                Destroy(remoteSceneParent.gameObject);
+                remoteSceneParent = null;
+            }
+            
+            _remoteStabilizer.Reset();
         }
 
         /// <summary>
