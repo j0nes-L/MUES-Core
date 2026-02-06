@@ -43,6 +43,8 @@ namespace MUES.Core
 
         [HideInInspector][Networked] public NetworkBool IsRemote { get; set; }  // True if this avatar belongs to a remote player
 
+        [HideInInspector][Networked] public NetworkBool IsReadyToBeVisible { get; set; }    // True when the avatar has received enough data to be shown (e.g. position initialized)
+
         [HideInInspector][Networked] public NetworkBool IsAfk { get; set; }  // True when HMD is unmounted or stabilizing
         [HideInInspector][Networked] public Vector3 AfkMarkerLocalPos { get; set; }  // Last known position for AFK marker (anchor-relative)
         [HideInInspector][Networked] public Quaternion AfkMarkerLocalRot { get; set; }  // Last known rotation for AFK marker (anchor-relative)
@@ -280,9 +282,7 @@ namespace MUES.Core
                 nameTagCanvasGroup.alpha = 1f;
 
             if (Object.HasInputAuthority)
-            {
                 SetupVoiceComponents();
-            }
             else
             {
                 voiceSetupPending = true;
@@ -563,6 +563,9 @@ namespace MUES.Core
             }
         }
 
+        /// <summary>
+        /// Updates the position, rotation, and visibility of a hand marker based on the provided parameters.
+        /// </summary>
         private void UpdateHandMarker(bool visible, Transform marker, MeshRenderer renderer,
             Vector3 localPos, Quaternion localRot, ref Vector3 vel, ref Quaternion smoothRot)
         {
@@ -667,6 +670,12 @@ namespace MUES.Core
                 return;
             }
 
+            if (!IsReadyToBeVisible || !IsLocalPlayerReadyToSeeOthers())
+            {
+                afkMarker.SetActive(false);
+                return;
+            }
+
             bool shouldShowAfk = IsAfk && IsRemoteOrShowAvatars();
 
             if (!shouldShowAfk)
@@ -726,6 +735,9 @@ namespace MUES.Core
         private bool ShouldShowAvatar()
         {
             if (!IsPositionInitialized) return false;
+            if (!IsReadyToBeVisible) return false;
+            
+            if (!Object.HasInputAuthority && !IsLocalPlayerReadyToSeeOthers()) return false;
             
             bool isCurrentlyStabilizing = Object.HasInputAuthority ? isWaitingAfterMount : IsStabilizing;
             if (!IsHmdMounted || isCurrentlyStabilizing) return false;
@@ -737,7 +749,8 @@ namespace MUES.Core
         /// </summary>
         private bool ShouldShowNameTagOnly()
         {
-            if (!IsPositionInitialized) return false;
+            if (!IsPositionInitialized || !IsReadyToBeVisible) return false;     
+            if (!Object.HasInputAuthority && !IsLocalPlayerReadyToSeeOthers()) return false;
             
             bool isCurrentlyStabilizing = Object.HasInputAuthority ? isWaitingAfterMount : IsStabilizing;
             if (!IsHmdMounted || isCurrentlyStabilizing) return false;
@@ -746,6 +759,26 @@ namespace MUES.Core
             if (net == null || net.isRemote || IsRemote || net.showAvatarsForColocated) return false;
 
             return true;
+        }
+
+        /// <summary>
+        /// Determines if the local player is ready to see other avatars based on their own avatar's state.
+        /// </summary>
+        private bool IsLocalPlayerReadyToSeeOthers()
+        {
+            var net = MUES_Networking.Instance;
+            if (net == null) return false;
+            
+            var runner = net.Runner;
+            if (runner == null) return false;
+            
+            var localPlayerObject = runner.GetPlayerObject(runner.LocalPlayer);
+            if (localPlayerObject == null) return false;
+            
+            var localAvatar = localPlayerObject.GetComponent<MUES_AvatarMarker>();
+            if (localAvatar == null) return false;
+            
+            return localAvatar.IsReadyToBeVisible;
         }
 
         /// <summary>
@@ -826,12 +859,11 @@ namespace MUES.Core
 
             ConsoleMessage.Send(debugMode, $"Avatar - SetupVoiceComponents: isLocal={isLocal}, IsRemote={IsRemote}, net.isRemote={net?.isRemote}", Color.cyan);
 
-            voiceRecorder.TransmitEnabled = isLocal;
-            voiceRecorder.enabled = isLocal;
-
             if (isLocal)
             {
-                ConsoleMessage.Send(debugMode, "Avatar - Voice Recorder enabled for local player.", Color.cyan);
+                voiceRecorder.TransmitEnabled = true;
+                
+                ConsoleMessage.Send(debugMode, "Avatar - Voice Recorder TransmitEnabled for local player.", Color.cyan);
 
                 voiceSpeaker.enabled = false;
                 voiceAudioSource.enabled = false;

@@ -111,6 +111,9 @@ namespace MUES.Core
             _lastKnownSpawnerPlayerId = SpawnerPlayerId;
             _lastKnownSpawnerControlsTransform = SpawnerControlsTransform;
 
+            if (!string.IsNullOrEmpty(ModelFileName.ToString()))
+                SetVisibility(false);
+
             if (Object.HasStateAuthority && SpawnerPlayerId == -1)
             {
                 SpawnerPlayerId = (Object.InputAuthority == PlayerRef.None || Object.InputAuthority.PlayerId < 0)
@@ -124,6 +127,18 @@ namespace MUES.Core
 
             DisableExistingGrabbableComponents();
             StartCoroutine(InitRoutine());
+        }
+
+        /// <summary>
+        /// Sets the visibility of all renderers on this object and its children.
+        /// </summary>
+        private void SetVisibility(bool visible)
+        {
+            var renderers = GetComponentsInChildren<Renderer>(true);
+            foreach (var renderer in renderers)
+                renderer.enabled = visible;
+
+            ConsoleMessage.Send(true, $"Networked Transform - Visibility set to {visible} ({renderers.Length} renderers)", visible ? Color.green : Color.yellow);
         }
 
         /// <summary>
@@ -341,12 +356,14 @@ namespace MUES.Core
             if (string.IsNullOrEmpty(modelName))
             {
                 ConsoleMessage.Send(true, "Networked Transform - No model filename set - using static prefab.", Color.cyan);
+                SetVisibility(true);
                 yield break;
             }
 
             if (modelLoaded || transform.childCount > 0)
             {
                 ConsoleMessage.Send(true, "Networked Transform - Model already loaded.", Color.yellow);
+                SetVisibility(true);
                 yield break;
             }
 
@@ -397,6 +414,9 @@ namespace MUES.Core
                     else AnchorToWorld();
                 }
             }
+
+            SetVisibility(true);
+            ConsoleMessage.Send(true, $"Networked Transform - Object is now visible and ready for interaction", Color.green);
         }
 
         /// <summary>

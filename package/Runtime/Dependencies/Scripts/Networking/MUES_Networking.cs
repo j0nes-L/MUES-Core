@@ -617,12 +617,31 @@ namespace MUES.Core
 
             SetSessionMeta();
             ConfigureCamera();
-            StartCoroutine(SpawnAvatarMarker(player));
+            StartCoroutine(SpawnAvatarMarkerAndSetReady(player));
 
             MUES_RoomVisualizer.Instance.HideSceneWhileLoading(false);
             MUES_RoomVisualizer.Instance.CaptureRoom();
 
             OnHostJoined?.Invoke(player);
+        }
+
+        /// <summary>
+        /// Spawns the avatar marker for the host player and marks it as ready to be visible.
+        /// </summary>
+        private IEnumerator SpawnAvatarMarkerAndSetReady(PlayerRef player)
+        {
+            yield return SpawnAvatarMarker(player);
+            
+            var playerObject = Runner.GetPlayerObject(player);
+            if (playerObject != null)
+            {
+                var avatar = playerObject.GetComponent<MUES_AvatarMarker>();
+                if (avatar != null)
+                {
+                    avatar.IsReadyToBeVisible = true;
+                    ConsoleMessage.Send(debugMode, $"Host avatar marked as ready to be visible.", Color.green);
+                }
+            }
         }
 
         /// <summary>
@@ -864,6 +883,17 @@ namespace MUES.Core
 
                 if (!teleportCompleted)
                     ConsoleMessage.Send(debugMode, "Teleport timeout reached, continuing anyway.", Color.yellow);
+            }
+
+            var playerObject = Runner.GetPlayerObject(player);
+            if (playerObject != null)
+            {
+                var avatar = playerObject.GetComponent<MUES_AvatarMarker>();
+                if (avatar != null)
+                {
+                    avatar.IsReadyToBeVisible = true;
+                    ConsoleMessage.Send(debugMode, $"Client avatar marked as ready to be visible. isRemote={isRemote}", Color.green);
+                }
             }
 
             MUES_RoomVisualizer.Instance.RenderRoomGeometry(true);
