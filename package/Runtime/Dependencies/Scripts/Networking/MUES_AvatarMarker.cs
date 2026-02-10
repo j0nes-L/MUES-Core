@@ -60,6 +60,7 @@ namespace MUES.Core
 
         private MeshRenderer headRenderer, handRendererR, handRendererL;    // Renderers for visibility control
         private CanvasGroup nameTagCanvasGroup; // Canvas group for name tag visibility
+        private UnityEngine.UI.Image nameTagBackground; // Background image for the name tag (for color changes)
         private TextMeshProUGUI nameText, nameTextAfk;   // Text component for displaying player name
 
         private readonly float rotationSmoothSpeed = 15f;    // Speed for smooth name tag rotation
@@ -183,6 +184,7 @@ namespace MUES.Core
 
             nameTag = head.GetChild(0);
             nameTagCanvasGroup = nameTag.GetComponent<CanvasGroup>();
+            nameTagBackground = nameTagCanvasGroup.GetComponentInChildren<UnityEngine.UI.Image>();
             nameText = nameTagCanvasGroup.GetComponentInChildren<TextMeshProUGUI>();
 
             handMarkerRight = transform.Find("HandMarkerR");
@@ -567,6 +569,12 @@ namespace MUES.Core
 
             ConsoleMessage.Send(debugMode, $"Avatar - Nametag updated to: {name}", Color.cyan);
         }
+
+        public void SetNameplateColor(Color color)
+        {
+            if (nameTagBackground != null)
+                nameTagBackground.color = color;
+        }   
 
         /// <summary>
         /// Gets executed every frame to update the avatar marker's position, rotation, and visibility.
