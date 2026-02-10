@@ -58,6 +58,7 @@ namespace MUES.Core
         [HideInInspector] public Transform anchorTransform, sceneParent; // Parent transform for instantiated scene objects.
         [HideInInspector] public bool isRemote, isConnected, isJoiningAsClient;  // Networking state flags.
         [HideInInspector] public PlayerRef _previousMasterClient = PlayerRef.None; // Previous master client reference.
+        [HideInInspector] public bool useCustomRoomModel; // Flag to determine whether to use a custom room model instead of the scanned room geometry.
 
         private NetworkRunner _runnerPrefab;    // Prefab for the NetworkRunner.
         private MRUK _mruk; // Reference to the MRUK component.
@@ -181,6 +182,11 @@ namespace MUES.Core
         /// Fired when QR code scanning state changes. Provides the new scanning state.
         /// </summary>
         public static event Action<bool> OnQRCodeScanningStateChanged;
+
+        /// <summary>
+        /// Fired when the custom room model is ready to be initialized and to be used instead of the scanned room geometry.
+        /// </summary>
+        public static event Action OnCustomRoomInit;
 
         /// <summary>
         /// Fired when room scanning is finished with positive result.
@@ -1047,9 +1053,16 @@ namespace MUES.Core
         /// </summary>
         private bool TryLoadRoomData(MUES_SessionMeta meta, PlayerRef player)
         {
+            if (useCustomRoomModel)
+            {
+                ConsoleMessage.Send(debugMode, "Custom room model used - skipping room data loading.", Color.cyan);
+                OnCustomRoomInit?.Invoke();
+                return true;
+            }
+
             if (!isRemote)
             {
-                ConsoleMessage.Send(debugMode, "Colocated client - skipping room data loading.", Color.cyan);
+                ConsoleMessage.Send(debugMode, "Colocated client - room loading disabled - skipping room data loading.", Color.cyan);
                 return true;
             }
 

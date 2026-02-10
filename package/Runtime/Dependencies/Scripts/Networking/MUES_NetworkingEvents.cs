@@ -28,7 +28,6 @@ namespace MUES.Core
 
         /// <summary>
         /// Registers this callback handler with the given NetworkRunner.
-        /// Call this from MUES_Networking when initializing the runner.
         /// </summary>
         public void RegisterWithRunner(NetworkRunner runner)
         {
@@ -64,7 +63,6 @@ namespace MUES.Core
 
             if (runner.IsSharedModeMasterClient) net._previousMasterClient = runner.LocalPlayer;
 
-            // Handle local player joining
             if (player == runner.LocalPlayer)
             {
                 if (runner.IsSharedModeMasterClient)

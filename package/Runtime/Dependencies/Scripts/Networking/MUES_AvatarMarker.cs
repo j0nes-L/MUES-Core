@@ -679,7 +679,6 @@ namespace MUES.Core
         /// <summary>
         /// Updates the head marker's position and rotation based on whether anchor-relative positioning should be used.
         /// </summary>
-        /// <param name="useAnchorRelative"></param>
         private void UpdateHeadTransform(bool useAnchorRelative)
         {
             if (head == null) return;
