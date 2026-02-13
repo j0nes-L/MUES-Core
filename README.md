@@ -25,7 +25,7 @@
 <br><br>
 
 This Framework requires the ```Meta All in One SDK``` *(v.83)*,  ```GLTFast (Unity) - com.unity.cloud.gltfast``` as well as ```Photon Fusion``` and ```Photon Voice```.
-URP is supported, BRP support is being worked on!
+URP and BRP are supported!
 
 <br>
 <img width="420" height="420" alt="pov of colocated client" src="https://github.com/user-attachments/assets/23b2ee76-7f9a-44ab-a338-97568c820f91" /><br>
