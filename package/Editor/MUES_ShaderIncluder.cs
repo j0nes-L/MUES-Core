@@ -43,7 +43,6 @@ namespace MUES.Editor
             var currentRP = GraphicsSettings.currentRenderPipeline;
             if (currentRP == null) return false;
             
-            // Check the type name to avoid direct reference to URP types
             return currentRP.GetType().Name.Contains("Universal");
         }
 
