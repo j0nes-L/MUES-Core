@@ -1,7 +1,7 @@
 # Multiuser Environmental Sharing
 ### A Open source framework for collaboration in hybrid meeting environments!
 
-*This project was created during my work at the NewWorkDesignLab. Please note that this project is still a Work in Progress! If you encounter bugs feel free to open a issue! :)* 
+*This project was created as part of my work at the NewWorkDesignLab. Please note that this project is still a Work in Progress! If you encounter bugs feel free to open a issue! :)* 
 
 <img width="544" height="463" alt="pov of remote client" src="https://github.com/user-attachments/assets/e83e3472-c8f4-42b0-beae-bb7fa34c81aa"/><br>
 <sup>POV of a remote client, viewing the users in the physical space.</sup>
